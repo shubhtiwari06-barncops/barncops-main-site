@@ -1,0 +1,16 @@
+.vercel
+.env*
+!.env.example
+
+node_modules
+.DS_Store
+.output
+.tanstack
+.grok/*
+!.grok/app-env.json
+*.zip
+screenshots
+artifacts
+attachments
+exports
+*.log

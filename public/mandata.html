@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mandata.ai - AI Constituency Management & Political Governance Platform</title>
+  <meta name="description" content="Win the election, govern the constituency. Mandata.ai is India's first AI-powered political accountability platform featuring real-time sentiment analysis, issue generation, and live cadre telematics." />
+  <meta name="keywords" content="Constituency Management Software, Political Governance App, MLA Dashboard, Citizen Grievance Tracking, Post-Election Tech, Political Accountability Tool, Election War Room Dashboard" />
+  <meta name="theme-color" content="#0b0f19" />
+  <meta property="og:title" content="Mandata.ai - AI Constituency Management & Political Governance Platform" />
+  <meta property="og:description" content="Win the election, govern the constituency. Mandata.ai is India's first AI-powered political accountability platform featuring real-time sentiment analysis, issue generation, and live cadre telematics." />
+  <meta property="og:type" content="website" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Mandata.ai",
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Web",
+    "description": "Constituency management and political governance platform: real-time sentiment analysis, issue generation, citizen grievance tracking, and live cadre telematics for MLAs and MPs.",
+    "url": "https://mandata.ai",
+    "offers": {
+      "@type": "Offer",
+      "availability": "https://schema.org/OnlineOnly",
+      "priceCurrency": "INR",
+      "description": "Enterprise pricing on request"
+    }
+  }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0b0f19; }
+    .grid-bleed {
+      background-image:
+        linear-gradient(to right, rgba(148,163,184,0.08) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(148,163,184,0.08) 1px, transparent 1px);
+      background-size: 48px 48px;
+    }
+    .reveal { opacity: 0; transform: translateY(16px); animation: rise 0.7s ease forwards; }
+    @keyframes rise { to { opacity: 1; transform: none; } }
+    .pulse-dot { box-shadow: 0 0 0 0 rgba(16,185,129,0.6); animation: ping 2.4s infinite; }
+    @keyframes ping {
+      0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.55); }
+      70% { box-shadow: 0 0 0 12px rgba(16,185,129,0); }
+      100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    }
+  </style>
+</head>
+<body class="bg-[#0b0f19] text-slate-100 antialiased" x-data="landing()">
+  <a href="#content" class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:bg-white focus:px-3 focus:py-2 focus:text-slate-900">Skip to content</a>
+
+  <header class="sticky top-0 z-40 border-b border-white/10 bg-[#0b0f19]/85 backdrop-blur">
+    <div class="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
+      <a href="#content" class="text-sm font-semibold tracking-tight text-white no-underline">Mandata.ai</a>
+      <nav class="hidden items-center gap-6 text-xs font-medium uppercase tracking-[0.16em] text-slate-400 md:flex" aria-label="Page">
+        <a href="#incumbency" class="hover:text-white">Incumbency</a>
+        <a href="#governance" class="hover:text-white">Governance</a>
+        <a href="#matrix" class="hover:text-white">Matrix</a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <button type="button" class="hidden h-10 items-center border border-white/15 px-4 text-xs font-semibold uppercase tracking-wide text-slate-200 hover:bg-white/5 sm:inline-flex" @click="open = true">Book Governance Demo</button>
+        <a href="/platform" class="inline-flex h-10 items-center bg-[#3b82f6] px-4 text-xs font-semibold uppercase tracking-wide text-white no-underline hover:bg-blue-500">Access the Sandbox</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="content">
+    <section class="relative overflow-hidden">
+      <div class="grid-bleed absolute inset-0 opacity-70"></div>
+      <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(59,130,246,0.22),transparent_45%),radial-gradient(ellipse_at_bottom_left,rgba(16,185,129,0.12),transparent_40%)]"></div>
+      <div class="pointer-events-none absolute inset-0">
+        <span class="pulse-dot absolute left-[12%] top-[28%] h-2 w-2 rounded-full bg-[#10b981]"></span>
+        <span class="absolute left-[26%] top-[46%] h-2 w-2 rounded-full bg-[#3b82f6]"></span>
+        <span class="absolute left-[18%] top-[64%] h-1.5 w-1.5 rounded-full bg-[#10b981]/80"></span>
+        <span class="absolute left-[12%] top-[30%] h-px w-40 rotate-12 bg-gradient-to-r from-[#10b981]/70 to-[#3b82f6]/40"></span>
+      </div>
+      <div class="relative mx-auto grid max-w-7xl gap-12 px-4 pb-20 pt-16 sm:px-6 lg:grid-cols-12 lg:pt-24">
+        <div class="lg:col-span-7">
+          <p class="text-xs font-semibold uppercase tracking-[0.22em] text-[#10b981]">Constituency Management Software</p>
+          <h1 class="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-6xl">Win the mandate. Govern the constituency.</h1>
+          <p class="mt-6 max-w-2xl text-lg leading-relaxed text-slate-300">Elections are won in months. The office is a five-year file. mandata.ai is a permissioned constituency system: role-based access, activity history, and human oversight. Track citizen issues and keep outreach auditable.</p>
+          <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+            <a href="/platform" class="inline-flex h-12 items-center justify-center bg-[#3b82f6] px-6 text-sm font-semibold text-white no-underline hover:bg-blue-500">Access the Sandbox</a>
+            <button type="button" class="inline-flex h-12 items-center justify-center border border-white/15 px-6 text-sm font-semibold text-white hover:bg-white/5" @click="open = true">Book Governance Demo</button>
+          </div>
+          <p class="mt-6 max-w-xl text-sm leading-relaxed text-slate-400">A political governance app for sitting MLAs and MPs, aspiring leaders, and parties. Post-election tech that keeps the MLA dashboard, citizen grievance tracking, and the election war room dashboard on one file for five years.</p>
+        </div>
+        <div class="lg:col-span-5">
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_0_80px_rgba(59,130,246,0.12)] backdrop-blur">
+            <div class="flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-slate-400">
+              <span>Political accountability tool</span>
+              <span class="text-[#10b981]">Illustrative</span>
+            </div>
+            <div class="relative mt-4 h-52 overflow-hidden rounded-xl border border-white/10 bg-[#070b14]">
+              <div class="grid-bleed absolute inset-0 opacity-80" style="background-size:32px 32px"></div>
+              <span class="pulse-dot absolute left-[18%] top-[34%] h-2.5 w-2.5 rounded-full bg-[#10b981]"></span>
+              <span class="absolute left-[42%] top-[48%] h-2.5 w-2.5 rounded-full bg-[#3b82f6]"></span>
+              <span class="pulse-dot absolute left-[68%] top-[30%] h-2.5 w-2.5 rounded-full bg-[#10b981]" style="animation-delay:.6s"></span>
+              <span class="absolute left-[20%] top-[38%] h-px w-28 rotate-6 bg-gradient-to-r from-[#10b981] to-[#3b82f6]"></span>
+              <span class="absolute left-[46%] top-[50%] h-px w-24 -rotate-6 bg-gradient-to-r from-[#3b82f6] to-transparent"></span>
+            </div>
+            <dl class="mt-4 grid grid-cols-3 gap-3 text-center">
+              <div class="rounded-lg border border-white/10 bg-black/20 p-3"><dt class="text-[10px] uppercase tracking-wider text-slate-500">Mood</dt><dd class="mt-1 font-semibold text-[#10b981]">Live</dd></div>
+              <div class="rounded-lg border border-white/10 bg-black/20 p-3"><dt class="text-[10px] uppercase tracking-wider text-slate-500">Issues</dt><dd class="mt-1 font-semibold text-white">Booth</dd></div>
+              <div class="rounded-lg border border-white/10 bg-black/20 p-3"><dt class="text-[10px] uppercase tracking-wider text-slate-500">Action</dt><dd class="mt-1 font-semibold text-[#3b82f6]">Mapped</dd></div>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="incumbency" class="border-t border-white/10">
+      <div class="mx-auto max-w-7xl px-4 py-20 sm:px-6">
+        <p class="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">The incumbency trap</p>
+        <h2 class="mt-3 max-w-4xl text-3xl font-semibold uppercase tracking-tight text-white sm:text-4xl">The Day After Victory is When You Start Losing.</h2>
+        <div class="mt-10 grid gap-4 md:grid-cols-3">
+          <article class="reveal rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#10b981]">01</p>
+            <h3 class="mt-4 text-xl font-semibold text-white">The Disconnect</h3>
+            <p class="mt-3 text-sm leading-relaxed text-slate-300">Leaders lose touch with booth-level realities the moment the campaign ends. Constituency management software has to stay on after the count, or the seat goes quiet.</p>
+          </article>
+          <article class="reveal rounded-2xl border border-white/10 bg-white/[0.03] p-6" style="animation-delay:.08s">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#10b981]">02</p>
+            <h3 class="mt-4 text-xl font-semibold text-white">Invisible Anti-Incumbency</h3>
+            <p class="mt-3 text-sm leading-relaxed text-slate-300">Real public grievances bubble up too late, masked by “Yes Men” and ghost cadres. A political accountability tool that waits for the next rally is already behind.</p>
+          </article>
+          <article class="reveal rounded-2xl border border-white/10 bg-white/[0.03] p-6" style="animation-delay:.16s">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#10b981]">03</p>
+            <h3 class="mt-4 text-xl font-semibold text-white">The Accountability Gap</h3>
+            <p class="mt-3 text-sm leading-relaxed text-slate-300">Citizens feel ignored because there is no system to track promises vs. execution on the ground. Citizen grievance tracking is the difference between a speech and a file.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="governance" class="border-t border-white/10">
+      <div class="mx-auto max-w-7xl px-4 py-20 sm:px-6">
+        <p class="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Post-election tech</p>
+        <h2 class="mt-3 max-w-4xl text-3xl font-semibold uppercase tracking-tight text-white sm:text-4xl">Engineered for Absolute Control & Continuous Connectivity.</h2>
+        <div class="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article class="reveal rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] to-transparent p-6 xl:col-span-2">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#3b82f6]">Issue generation</p>
+            <h3 class="mt-3 text-2xl font-semibold text-white">Real Issue Generation (AI)</h3>
+            <p class="mt-3 max-w-md text-sm leading-relaxed text-slate-300">NLP algorithms that filter noise and automatically surface the actual friction points (water, roads, welfare) booth by booth.</p>
+          </article>
+          <article class="reveal rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#10b981]">Mood</p>
+            <h3 class="mt-3 text-xl font-semibold text-white">Continuous Sentiment Analysis</h3>
+            <p class="mt-3 text-sm leading-relaxed text-slate-300">Track the public mood in real-time. Know exactly which ward is turning hostile before it becomes a crisis.</p>
+          </article>
+          <article class="reveal rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#10b981]">Field</p>
+            <h3 class="mt-3 text-xl font-semibold text-white">Live Telematics & PoM</h3>
+            <p class="mt-3 text-sm leading-relaxed text-slate-300">GPS tracking of field workers and grievance redressal teams with geo-tagged Proof of Mobilization.</p>
+          </article>
+          <article class="reveal rounded-2xl border border-white/10 bg-gradient-to-br from-[#3b82f6]/10 to-transparent p-6 md:col-span-2 xl:col-span-4">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#3b82f6]">MLA dashboard</p>
+            <h3 class="mt-3 text-2xl font-semibold text-white">The Accountability Dashboard</h3>
+            <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-300">A transparent command center mapping citizen requests directly to executive action, building unshakeable trust. The election war room dashboard does not close on counting day — it becomes the political governance app for the term.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="matrix" class="border-t border-white/10">
+      <div class="mx-auto max-w-7xl px-4 py-20 sm:px-6">
+        <p class="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Five-year file</p>
+        <h2 class="mt-3 max-w-3xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">From war-room to governing office, one matrix.</h2>
+        <div class="mt-10 grid gap-4 lg:grid-cols-5">
+          <div class="rounded-2xl border border-white/10 bg-black/30 p-5 lg:col-span-3">
+            <p class="text-xs uppercase tracking-[0.18em] text-slate-500">Governance tape · illustrative</p>
+            <ul class="mt-4 space-y-3 font-mono text-xs leading-relaxed text-slate-300">
+              <li class="border-l-2 border-[#10b981] pl-3">Ward 7 · water cluster · issue generated · assigned to redressal</li>
+              <li class="border-l-2 border-[#3b82f6] pl-3">Sentiment · booth ring hostile · 11 days before it reaches the office</li>
+              <li class="border-l-2 border-white/20 pl-3">Promise vs execution · road package · two booths still open</li>
+              <li class="border-l-2 border-[#10b981] pl-3">PoM · grievance team on coordinate · timestamp locked</li>
+              <li class="border-l-2 border-white/20 pl-3">MLA dashboard · citizen request mapped to executive action</li>
+            </ul>
+          </div>
+          <div class="grid gap-4 lg:col-span-2">
+            <div class="rounded-2xl border border-white/10 p-5">
+              <p class="text-xs uppercase tracking-[0.18em] text-slate-500">Who it is for</p>
+              <p class="mt-3 text-sm leading-relaxed text-slate-300">Sitting MLAs and MPs, aspiring leaders, and parties who need constituency management software after the mandate — not only a campaign app for the month of polling.</p>
+            </div>
+            <div class="rounded-2xl border border-[#10b981]/30 bg-[#10b981]/5 p-5">
+              <p class="text-xs uppercase tracking-[0.18em] text-[#10b981]">Sandbox</p>
+              <p class="mt-3 text-sm text-slate-300">Walk the governance matrix before you brief the office.</p>
+              <a href="/platform" class="mt-4 inline-flex h-10 items-center bg-[#3b82f6] px-4 text-xs font-semibold uppercase tracking-wide text-white no-underline">Access the Sandbox</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-white/10 pb-28">
+    <div class="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-10 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <p>Mandata.ai · Constituency management & political governance</p>
+      <a href="/" class="text-slate-400 hover:text-white">Firm site</a>
+    </div>
+  </footer>
+
+  <div class="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0b0f19]/95 backdrop-blur">
+    <div class="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <p class="text-sm text-slate-300">Don't let anti-incumbency dictate your next election. Arm your office with continuous precinct-level intelligence and governance telematics.</p>
+      <a :href="wa" class="inline-flex h-11 shrink-0 items-center justify-center bg-[#10b981] px-5 text-center text-sm font-semibold text-[#04210f] no-underline hover:bg-emerald-400">Connect via WhatsApp for Enterprise Pricing</a>
+    </div>
+  </div>
+
+  <div x-show="open" x-cloak class="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center" @keydown.escape.window="open = false">
+    <div class="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-[#0f1524] p-6 shadow-2xl" @click.outside="open = false" role="dialog" aria-modal="true" aria-labelledby="demo-title">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#10b981]">Governance demo</p>
+          <h2 id="demo-title" class="mt-2 text-2xl font-semibold text-white">Book Governance Demo</h2>
+        </div>
+        <button type="button" class="text-slate-400 hover:text-white" @click="open = false" aria-label="Close">Close</button>
+      </div>
+      <form class="mt-6 space-y-4" x-show="!sent" @submit.prevent="submit">
+        <p class="text-sm text-slate-400">Name, seat, and a way back. Pricing follows if there is a fit.</p>
+        <label class="block text-xs uppercase tracking-wider text-slate-500">Name
+          <input required x-model="form.name" class="mt-1 h-11 w-full border border-white/10 bg-black/30 px-3 text-sm text-white outline-none focus:border-[#3b82f6]" />
+        </label>
+        <label class="block text-xs uppercase tracking-wider text-slate-500">Role
+          <select x-model="form.role" class="mt-1 h-11 w-full border border-white/10 bg-black/30 px-3 text-sm text-white outline-none focus:border-[#3b82f6]">
+            <option>Sitting MLA</option>
+            <option>Sitting MP</option>
+            <option>Aspiring leader</option>
+            <option>Party</option>
+            <option>Office</option>
+          </select>
+        </label>
+        <label class="block text-xs uppercase tracking-wider text-slate-500">Constituency
+          <input required x-model="form.geography" class="mt-1 h-11 w-full border border-white/10 bg-black/30 px-3 text-sm text-white outline-none focus:border-[#3b82f6]" />
+        </label>
+        <label class="block text-xs uppercase tracking-wider text-slate-500">Email
+          <input required type="email" x-model="form.email" class="mt-1 h-11 w-full border border-white/10 bg-black/30 px-3 text-sm text-white outline-none focus:border-[#3b82f6]" />
+        </label>
+        <label class="block text-xs uppercase tracking-wider text-slate-500">Phone
+          <input x-model="form.phone" class="mt-1 h-11 w-full border border-white/10 bg-black/30 px-3 text-sm text-white outline-none focus:border-[#3b82f6]" />
+        </label>
+        <label class="flex items-start gap-2 text-xs leading-relaxed text-slate-400">
+          <input type="checkbox" x-model="form.consent" class="mt-0.5" required />
+          <span>I confirm this is a confidential principal enquiry.</span>
+        </label>
+        <p class="text-sm text-red-400" x-show="error" x-text="error"></p>
+        <button type="submit" class="inline-flex h-11 w-full items-center justify-center bg-[#3b82f6] text-sm font-semibold text-white" :disabled="pending" x-text="pending ? 'Sending…' : 'Book Governance Demo'"></button>
+      </form>
+      <div x-show="sent" class="mt-6">
+        <p class="text-sm leading-relaxed text-slate-200">Request received. A director will reply with enterprise pricing and sandbox access if there is a fit.</p>
+        <a :href="wa" class="mt-4 inline-flex h-11 items-center bg-[#10b981] px-4 text-sm font-semibold text-[#04210f] no-underline">Connect via WhatsApp for Enterprise Pricing</a>
+      </div>
+    </div>
+  </div>
+
+  <style>[x-cloak]{display:none !important}</style>
+  <script>
+    function landing() {
+      return {
+        open: false,
+        sent: false,
+        pending: false,
+        error: "",
+        wa: "https://wa.me/919522236699?text=" + encodeURIComponent("Hi Bancorps, I am interested in deploying Mandata.ai for my constituency's 5-year governance matrix. Please provide the enterprise pricing and demo access."),
+        form: { name: "", role: "Sitting MLA", geography: "", email: "", phone: "", consent: false },
+        async submit() {
+          this.error = "";
+          if (!this.form.consent) { this.error = "Consent is required."; return; }
+          this.pending = true;
+          try {
+            const res = await fetch("/api/info-request", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                name: this.form.name,
+                email: this.form.email,
+                phone: this.form.phone || undefined,
+                topic: "Mandata.ai governance demo",
+                message: this.form.role + " · " + this.form.geography + " · Book Governance Demo for Mandata.ai 5-year constituency matrix.",
+                consent: true,
+                sourcePage: "/mandata"
+              })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.ok === false) throw new Error(data.error || "Could not file the request.");
+            this.sent = true;
+          } catch (err) {
+            this.error = err.message || "Could not file the request.";
+          } finally {
+            this.pending = false;
+          }
+        }
+      };
+    }
+  </script>
+</body>
+</html>
