@@ -206,23 +206,28 @@ function Home() {
               </a>
             </li>
             <li>
+              <a href="https://atlas.barncops.in/lok-sabha/2024/party-wise/" className="text-sm text-slate-200 no-underline hover:text-white">
+                2024 party-wise seats
+              </a>
+            </li>
+            <li>
+              <a href="https://atlas.barncops.in/lok-sabha/2024/state-wise/" className="text-sm text-slate-200 no-underline hover:text-white">
+                2024 state-wise results
+              </a>
+            </li>
+            <li>
+              <a href="https://atlas.barncops.in/vidhan-sabha/" className="text-sm text-slate-200 no-underline hover:text-white">
+                Vidhan Sabha results
+              </a>
+            </li>
+            <li>
               <a href="https://atlas.barncops.in/bihar/vidhan-sabha/2025/" className="text-sm text-slate-200 no-underline hover:text-white">
                 Bihar 2025
               </a>
             </li>
             <li>
-              <a href="https://atlas.barncops.in/west-bengal/vidhan-sabha/2026/" className="text-sm text-slate-200 no-underline hover:text-white">
-                West Bengal 2026
-              </a>
-            </li>
-            <li>
-              <a href="https://atlas.barncops.in/madhya-pradesh/vidhan-sabha/2023/" className="text-sm text-slate-200 no-underline hover:text-white">
-                Madhya Pradesh 2023
-              </a>
-            </li>
-            <li>
-              <a href="https://atlas.barncops.in/leaders/" className="text-sm text-slate-200 no-underline hover:text-white">
-                Leader profiles
+              <a href="https://atlas.barncops.in/ask/" className="text-sm text-slate-200 no-underline hover:text-white">
+                Ask the Atlas
               </a>
             </li>
           </ul>

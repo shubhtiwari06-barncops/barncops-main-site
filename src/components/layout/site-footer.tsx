@@ -37,8 +37,9 @@ export function SiteFooter() {
           </ul>
         </div>
 
-        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:col-span-7 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-8 sm:grid-cols-2 lg:col-span-7 lg:grid-cols-4">
           <FooterCol title={t("practice")} items={FOOTER_NAV.practice} />
+          <FooterCol title={t("atlasCol")} items={FOOTER_NAV.atlas} />
           <div>
             <FooterCol title={t("firm")} items={FOOTER_NAV.firm} />
             <button
