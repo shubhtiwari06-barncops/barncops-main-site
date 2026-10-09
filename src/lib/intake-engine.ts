@@ -315,6 +315,35 @@ function atlasReply(hi: boolean): string {
   ].join("\n");
 }
 
+function isAtlasPayCta(text: string): boolean {
+  return /constituency dossier|commercial licence|pay for (ask|maps|atlas|a licence)|full candidate list|booth-level|booth file|credits\s*\/\s*subscription|regional maps and region-wise/i.test(
+    text,
+  );
+}
+
+async function atlasAskReply(phone: string, text: string): Promise<string | null> {
+  const secret = (process.env.ATLAS_WA_SECRET || "").trim();
+  if (!secret) return null;
+  const url = (process.env.ATLAS_WA_ASK_URL || "https://atlas.barncops.in/api/wa-ask/").trim();
+  if (!/^https:\/\//i.test(url)) return null;
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 12000);
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-atlas-intake-secret": secret },
+      body: JSON.stringify({ phone, q: text }),
+      signal: ac.signal,
+    });
+    const j = (await r.json()) as { text?: string };
+    return j && j.text ? String(j.text).slice(0, 4096) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 function computeSpamScore(body: string, profileName: string | null, channel: Channel, contactState: string): SpamResult {
   const signals: string[] = [];
   let score = 0;
@@ -701,7 +730,8 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
   /* Stateless fallback */
   if (!db) {
     if (isText && isAtlasLead(body)) {
-      await sendViaChannel(channel, senderKey, atlasReply(hi), true);
+      const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
+      await sendViaChannel(channel, senderKey, asked || atlasReply(hi), true);
       await emailTeam(channel, {
         subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}`,
         displayName: name || displayId,
@@ -815,7 +845,8 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
     c.role_raw = "atlas";
     c.geography = body.slice(0, 500);
     c.state = "HANDOFF";
-    reply = atlasReply(hi);
+    const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
+    reply = asked || atlasReply(hi);
     await sendViaChannel(channel, senderKey, reply, true);
     await db.logMessage(senderKey, channel, "out", "text", reply, null, 0, ["atlas"]);
     await db.saveContact(c);
@@ -964,6 +995,13 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
     }
 
     case "HANDOFF": {
+      if (c.role_raw === "atlas" && isText) {
+        const asked = await atlasAskReply(senderKey, body);
+        const follow = asked || atlasReply(hi);
+        await sendViaChannel(channel, senderKey, follow, true);
+        await db.logMessage(senderKey, channel, "out", "text", follow, null, 0, ["atlas"]);
+        return;
+      }
       const transcript = await db.transcript(senderKey);
       const role = c.role ?? "other";
       await emailTeam(channel, {
