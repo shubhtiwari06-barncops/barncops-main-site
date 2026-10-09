@@ -286,6 +286,18 @@ function isAtlasLead(text: string): boolean {
   );
 }
 
+/** Election question even without an Atlas URL — e.g. "Bihar 2020". */
+function isAtlasQuestion(text: string): boolean {
+  const s = String(text || "").trim();
+  if (!s) return false;
+  if (isAtlasLead(s) || isAtlasPayCta(s)) return true;
+  if (/^\s*(atlas|ask|एटलस)\s*$/i.test(s)) return true;
+  const year = /\b(19[5-9]\d|20[0-2]\d)\b/.test(s);
+  const election =
+    /lok sabha|vidhan sabha|विधानसभा|लोकसभा|assembly|who won|winner|कौन जीता|कितनी सीट|vote share|\bseats?\b/i.test(s);
+  return !!(year && (election || detectState(s)));
+}
+
 function atlasPayUrl(): string {
   const u = (process.env.ATLAS_PAY_URL || process.env.PAYMENT_URL || "https://atlas.barncops.in/pay/").trim();
   return /^https:\/\//i.test(u) ? u : "https://atlas.barncops.in/pay/";
@@ -729,7 +741,7 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
 
   /* Stateless fallback */
   if (!db) {
-    if (isText && isAtlasLead(body)) {
+    if (isText && isAtlasQuestion(body)) {
       const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
       await sendViaChannel(channel, senderKey, asked || atlasReply(hi), true);
       await emailTeam(channel, {
@@ -778,11 +790,15 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
     c.slot = null;
   }
 
-  /* Existing mute — silent, but still log */
+  /* Existing mute — silent, but still log. Atlas/election questions unmute so a real query is not dropped. */
   if (c.muted_until && c.muted_until > new Date()) {
-    await db.logMessage(senderKey, channel, "in", kind, isText ? body : null, msg.mediaType ?? null, 0, ["muted_silent"]);
-    console.log("[intake] muted contact — silent log", { channel, senderKey, until: c.muted_until });
-    return;
+    if (!(isText && isAtlasQuestion(body))) {
+      await db.logMessage(senderKey, channel, "in", kind, isText ? body : null, msg.mediaType ?? null, 0, ["muted_silent"]);
+      console.log("[intake] muted contact — silent log", { channel, senderKey, until: c.muted_until });
+      return;
+    }
+    c.muted_until = null;
+    c.mute_reason = null;
   } else if (c.muted_until) {
     c.muted_until = null;
     c.mute_reason = null;
@@ -839,8 +855,8 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
 
   let reply: string | null = null;
 
-  /* Atlas (same WhatsApp number as consulting). Do not start the MLA/MP intake. */
-  if (isText && isAtlasLead(body) && (c.state === "NEW" || c.state === "ASKED_ROLE")) {
+  /* Atlas (same WhatsApp number as consulting). Election questions skip MLA intake, including HANDOFF. */
+  if (isText && isAtlasQuestion(body)) {
     c.role = "other";
     c.role_raw = "atlas";
     c.geography = body.slice(0, 500);
@@ -854,7 +870,7 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
       subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}${susTag}`,
       displayName: name || displayId,
       rows: [...rowsBase, ["Kind", "Election Atlas"], ["First message", body.slice(0, 400)], ["Language", hi ? "Hindi" : "English"], ["Received", fmtTs(msg.timestamp)]],
-      note: "Atlas pay link sent. After payment, run pipeline/issue_access.py and send the unlock URL on WhatsApp.",
+      note: asked ? "Atlas ask reply sent." : "Atlas pay link sent (ask API missed). After payment, run pipeline/issue_access.py.",
     });
     return;
   }
