@@ -10,6 +10,7 @@ import { handleInbound } from "../lib/intake-engine";
  *
  * Requires migrations 001 + 002 + 003.
  * Env: WHATSAPP_WEBHOOK_VERIFY_TOKEN, WHATSAPP_BUSINESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID.
+ * This is the only webhook for +91 95222 36699 — Atlas click-to-chat uses the same number.
  */
 
 type MetaTextMessage = { from: string; id: string; timestamp: string; type: string; text?: { body: string } };

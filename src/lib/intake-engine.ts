@@ -275,12 +275,82 @@ const SPAM_PATTERNS: Array<{ id: string; weight: number; pat: RegExp }> = [
   { id: "gambling", weight: 45, pat: /\b(betting|casino|dream11\s?tips|matka|jackpot|lottery)\b/i },
 ];
 
+/** Atlas click-to-chat texts always include atlas.barncops.in — do not treat that as spam. */
+function stripAtlasUrls(s: string): string {
+  return s.replace(/https?:\/\/(?:www\.)?atlas\.barncops\.in\S*/gi, " ").replace(/\batlas\.barncops\.in\S*/gi, " ");
+}
+
+function isAtlasLead(text: string): boolean {
+  return /atlas\.barncops\.in|election atlas|ask the atlas|एटलस|full candidate list|constituency map|booth-level|booth file|credits\s*\/\s*subscription|regional maps and region-wise|pay for (ask|maps|atlas|a licence|Ask)/i.test(
+    text,
+  );
+}
+
+function atlasPayUrl(): string {
+  const u = (process.env.ATLAS_PAY_URL || process.env.PAYMENT_URL || "https://atlas.barncops.in/pay/").trim();
+  return /^https:\/\//i.test(u) ? u : "https://atlas.barncops.in/pay/";
+}
+
+function atlasReply(hi: boolean): string {
+  const pay = atlasPayUrl();
+  if (hi) {
+    return [
+      "नोट किया — Election Atlas।",
+      "",
+      "कार्ड या UPI से यहाँ भुगतान करें। पैसे के बाद हम WhatsApp पर unlock लिंक भेजते हैं। लॉगिन अकाउंट नहीं है।",
+      "",
+      pay,
+      "",
+      "अगर यह सलाह/वार-रूम का मामला है, तो विधायक, सांसद या सीट लिखें — टीम वहीं से आगे बढ़ाएगी।",
+    ].join("\n");
+  }
+  return [
+    "Noted — Election Atlas.",
+    "",
+    "Pay here (card or UPI). After payment we send an unlock link on WhatsApp. There are no login accounts.",
+    "",
+    pay,
+    "",
+    "If this is a consulting mandate instead, write MLA, MP, or the seat — the team will take it from there.",
+  ].join("\n");
+}
+
+function isAtlasPayCta(text: string): boolean {
+  return /constituency dossier|commercial licence|pay for (ask|maps|atlas|a licence)|full candidate list|booth-level|booth file|credits\s*\/\s*subscription|regional maps and region-wise/i.test(
+    text,
+  );
+}
+
+async function atlasAskReply(phone: string, text: string): Promise<string | null> {
+  const secret = (process.env.ATLAS_WA_SECRET || "").trim();
+  if (!secret) return null;
+  const url = (process.env.ATLAS_WA_ASK_URL || "https://atlas.barncops.in/api/wa-ask/").trim();
+  if (!/^https:\/\//i.test(url)) return null;
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 12000);
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-atlas-intake-secret": secret },
+      body: JSON.stringify({ phone, q: text }),
+      signal: ac.signal,
+    });
+    const j = (await r.json()) as { text?: string };
+    return j && j.text ? String(j.text).slice(0, 4096) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 function computeSpamScore(body: string, profileName: string | null, channel: Channel, contactState: string): SpamResult {
   const signals: string[] = [];
   let score = 0;
+  const scanned = stripAtlasUrls(body);
 
   for (const { id, weight, pat } of SPAM_PATTERNS) {
-    if (pat.test(body)) {
+    if (pat.test(scanned)) {
       score += weight;
       signals.push(id);
     }
@@ -495,7 +565,7 @@ async function getDb(): Promise<Db | null> {
    9. Outbound senders — one per channel
    ═══════════════════════════════════════════════════════════════════ */
 
-async function sendWhatsAppText(to: string, body: string): Promise<void> {
+async function sendWhatsAppText(to: string, body: string, previewUrl = false): Promise<void> {
   const token = process.env.WHATSAPP_BUSINESS_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return console.warn("[intake] whatsapp send skipped — missing credentials");
@@ -503,7 +573,7 @@ async function sendWhatsAppText(to: string, body: string): Promise<void> {
     const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "text", text: { preview_url: false, body } }),
+      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "text", text: { preview_url: !!previewUrl, body } }),
     });
     if (!res.ok) console.error("[intake] whatsapp send failed", res.status, (await res.text()).slice(0, 500));
     else console.log("[intake] whatsapp reply sent to", to);
@@ -573,8 +643,8 @@ async function sendXDM(toUserId: string, body: string): Promise<void> {
   }
 }
 
-async function sendViaChannel(channel: Channel, senderKey: string, body: string): Promise<void> {
-  if (channel === "whatsapp") return sendWhatsAppText(senderKey, body);
+async function sendViaChannel(channel: Channel, senderKey: string, body: string, previewUrl = false): Promise<void> {
+  if (channel === "whatsapp") return sendWhatsAppText(senderKey, body, previewUrl);
   if (channel === "x") return sendXDM(senderKey, body);
   return sendMetaDM(channel, senderKey, body);
 }
@@ -659,6 +729,17 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
 
   /* Stateless fallback */
   if (!db) {
+    if (isText && isAtlasLead(body)) {
+      const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
+      await sendViaChannel(channel, senderKey, asked || atlasReply(hi), true);
+      await emailTeam(channel, {
+        subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}`,
+        displayName: name || displayId,
+        rows: [["From", displayId], ["Profile", name || "—"], ["Kind", "atlas"], ["Received", fmtTs(msg.timestamp)]],
+        note: body,
+      });
+      return;
+    }
     if (isText) await sendViaChannel(channel, senderKey, c_copy.intro);
     await emailTeam(channel, {
       subject: `${CHANNEL_LABEL[channel]} inbound · ${name || senderKey}`,
@@ -757,6 +838,26 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
   if (spam.score >= SUSPECT_SCORE) rowsBase.push(["Spam score", `${spam.score}/100 — ${spam.signals.join(", ")}`]);
 
   let reply: string | null = null;
+
+  /* Atlas (same WhatsApp number as consulting). Do not start the MLA/MP intake. */
+  if (isText && isAtlasLead(body) && (c.state === "NEW" || c.state === "ASKED_ROLE")) {
+    c.role = "other";
+    c.role_raw = "atlas";
+    c.geography = body.slice(0, 500);
+    c.state = "HANDOFF";
+    const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
+    reply = asked || atlasReply(hi);
+    await sendViaChannel(channel, senderKey, reply, true);
+    await db.logMessage(senderKey, channel, "out", "text", reply, null, 0, ["atlas"]);
+    await db.saveContact(c);
+    await emailTeam(channel, {
+      subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}${susTag}`,
+      displayName: name || displayId,
+      rows: [...rowsBase, ["Kind", "Election Atlas"], ["First message", body.slice(0, 400)], ["Language", hi ? "Hindi" : "English"], ["Received", fmtTs(msg.timestamp)]],
+      note: "Atlas pay link sent. After payment, run pipeline/issue_access.py and send the unlock URL on WhatsApp.",
+    });
+    return;
+  }
 
   /* Media */
   if (!isText) {
@@ -894,6 +995,13 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
     }
 
     case "HANDOFF": {
+      if (c.role_raw === "atlas" && isText) {
+        const asked = await atlasAskReply(senderKey, body);
+        const follow = asked || atlasReply(hi);
+        await sendViaChannel(channel, senderKey, follow, true);
+        await db.logMessage(senderKey, channel, "out", "text", follow, null, 0, ["atlas"]);
+        return;
+      }
       const transcript = await db.transcript(senderKey);
       const role = c.role ?? "other";
       await emailTeam(channel, {
