@@ -333,27 +333,68 @@ function isAtlasPayCta(text: string): boolean {
   );
 }
 
+function atlasAskUrls(): string[] {
+  const fromEnv = (process.env.ATLAS_WA_ASK_URL || "").trim();
+  const urls = [
+    fromEnv,
+    "https://barncops-atlas-git-main-shubhyouth-7062.vercel.app/api/wa-ask/",
+    "https://barncops-atlas.vercel.app/api/wa-ask/",
+  ];
+  const out: string[] = [];
+  const seen: Record<string, 1> = {};
+  for (const u of urls) {
+    if (!/^https:\/\//i.test(u)) continue;
+    if (seen[u]) continue;
+    seen[u] = 1;
+    out.push(u);
+  }
+  return out;
+}
+
 async function atlasAskReply(phone: string, text: string): Promise<string | null> {
   const secret = (process.env.ATLAS_WA_SECRET || "").trim();
   if (!secret) return null;
-  const url = (process.env.ATLAS_WA_ASK_URL || "https://atlas.barncops.in/api/wa-ask/").trim();
-  if (!/^https:\/\//i.test(url)) return null;
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 12000);
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-atlas-intake-secret": secret },
-      body: JSON.stringify({ phone, q: text }),
-      signal: ac.signal,
-    });
-    const j = (await r.json()) as { text?: string };
-    return j && j.text ? String(j.text).slice(0, 4096) : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(t);
+  const bypass = (process.env.ATLAS_WA_BYPASS || "").trim();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-atlas-intake-secret": secret,
+  };
+  if (bypass) {
+    headers["x-vercel-protection-bypass"] = bypass;
+    headers["x-vercel-set-bypass-cookie"] = "true";
   }
+  const body = JSON.stringify({ phone, q: text });
+  for (const url of atlasAskUrls()) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 12000);
+    try {
+      const r = await fetch(url, { method: "POST", headers, body, signal: ac.signal, redirect: "manual" });
+      const loc = r.headers.get("location") || "";
+      if (r.status >= 300 && r.status < 400 && /atlas\.barncops\.in/i.test(loc)) {
+        console.log("[intake] atlas ask skipped CF redirect", r.status);
+        continue;
+      }
+      const raw = await r.text();
+      if (raw.startsWith("<!") || /just a moment/i.test(raw)) {
+        console.log("[intake] atlas ask blocked", r.status);
+        continue;
+      }
+      let j: { text?: string } = {};
+      try {
+        j = JSON.parse(raw) as { text?: string };
+      } catch {
+        console.log("[intake] atlas ask not json", r.status);
+        continue;
+      }
+      if (j && j.text) return String(j.text).slice(0, 4096);
+      console.log("[intake] atlas ask no text", r.status);
+    } catch (err) {
+      console.log("[intake] atlas ask error", (err as Error)?.name || "fail");
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  return null;
 }
 
 function computeSpamScore(body: string, profileName: string | null, channel: Channel, contactState: string): SpamResult {
