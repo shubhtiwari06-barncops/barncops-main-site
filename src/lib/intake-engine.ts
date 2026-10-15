@@ -376,10 +376,40 @@ export function chooseAtlasReply(body: string, atlasText: string | null, hi: boo
   return { text: atlasMiss(hi), handler: "atlas_miss" };
 }
 
-async function replyAtlas(phone: string, body: string, hi: boolean): Promise<{ text: string; handler: string }> {
-  const asked = await atlasAskReply(phone, body);
-  if (asked && asked.text) return asked;
-  return chooseAtlasReply(body, null, hi);
+function checkingLine(hi: boolean, body: string): string {
+  if (hi || /[\u0900-\u097F]/.test(body)) return "देख रहा हूँ…";
+  if (/\b(mujhe|batao|kya|kaun|kitna|chunav|neta|seat|saal)\b/i.test(body)) return "Dekh raha hoon…";
+  return "Checking…";
+}
+
+/** If Atlas will take >5s, send a short Checking… ping first, then the answer. */
+async function replyAtlas(
+  phone: string,
+  body: string,
+  hi: boolean,
+  channel: Channel = "whatsapp",
+): Promise<{ text: string; handler: string }> {
+  let checkingSent = false;
+  const timer = setTimeout(() => {
+    checkingSent = true;
+    void sendViaChannel(channel, phone, checkingLine(hi, body)).catch(() => {});
+  }, 5000);
+  try {
+    const asked = await atlasAskReply(phone, body);
+    if (asked && asked.text) {
+      return {
+        text: asked.text,
+        handler: checkingSent ? `${asked.handler}+checking` : asked.handler,
+      };
+    }
+    const miss = chooseAtlasReply(body, null, hi);
+    return {
+      text: miss.text,
+      handler: checkingSent ? `${miss.handler}+checking` : miss.handler,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function isAtlasPayCta(text: string): boolean {
@@ -843,7 +873,7 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
   /* Stateless fallback */
   if (!db) {
     if (isText && isAtlasQuestion(body)) {
-      const picked = await replyAtlas(senderKey, body, hi);
+      const picked = await replyAtlas(senderKey, body, hi, channel);
       await sendViaChannel(channel, senderKey, picked.text, true);
       await emailTeam(channel, {
         subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}`,
@@ -962,7 +992,7 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
     c.role_raw = "atlas";
     c.geography = body.slice(0, 500);
     c.state = "HANDOFF";
-    const picked = await replyAtlas(senderKey, body, hi);
+    const picked = await replyAtlas(senderKey, body, hi, channel);
     reply = picked.text;
     await sendViaChannel(channel, senderKey, reply, true);
     await db.logMessage(senderKey, channel, "out", "text", reply, null, 0, ["atlas", picked.handler]);
@@ -1117,7 +1147,7 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
 
     case "HANDOFF": {
       if (c.role_raw === "atlas" && isText) {
-        const picked = await replyAtlas(senderKey, body, hi);
+        const picked = await replyAtlas(senderKey, body, hi, channel);
         const follow = picked.text;
         await sendViaChannel(channel, senderKey, follow, true);
         await db.logMessage(senderKey, channel, "out", "text", follow, null, 0, ["atlas", picked.handler]);
