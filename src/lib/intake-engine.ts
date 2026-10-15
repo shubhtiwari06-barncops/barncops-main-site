@@ -286,12 +286,44 @@ function isAtlasLead(text: string): boolean {
   );
 }
 
-/** Election question even without an Atlas URL — e.g. "Bihar 2020". */
-function isAtlasQuestion(text: string): boolean {
+const DATA_WORD =
+  /\b(mla|mp|seat|seats|vidhan|vidhansabha|loksabha|lok\s*sabha|assembly|result|results|chunav|election|winner|won|margin|turnout|swing|constituency|विधानसभा|लोकसभा|चुनाव|परिणाम|सीट|मतदान)\b/i;
+const DATA_YEAR = /\b(19|20)\d{2}\b/;
+const LEAD_WORD =
+  /\b(consult|consultant|consulting|hire|hiring|campaign|war\s*room|strategy\s*team|proposal|buy|purchase|subscription|price|pricing|सलाह|कैंपेन|कैम्पेन|वार\s*रूम|कीमत|दाम)\b/i;
+const NAME_STOP =
+  /^(yes|no|ok|okay|hi|hello|hey|thanks|thank|you|please|call|me|tomorrow|today|morning|evening|later|the|and|for|with|this|that|what|when|where|who|how|are|was|haan|nahi|nahin|theek|ji|nahi|kal|aaj)$/i;
+
+function bareRole(text: string): boolean {
+  return /^\s*(mla|mp|vidhayak|सांसद|विधायक)\s*$/i.test(String(text || ""));
+}
+
+/** Same gate as Atlas looksDataQuestion, plus a short person/place name (leader, state). */
+export function looksDataQuestion(text: string): boolean {
+  const s = String(text || "").trim();
+  if (!s || bareRole(s)) return false;
+  if (DATA_WORD.test(s) || DATA_YEAR.test(s)) return true;
+  if (s.length > 80 || /https?:|www\./i.test(s)) return false;
+  const words = s.split(/\s+/);
+  if (words.length < 2 || words.length > 5) return false;
+  if (words.some((w) => NAME_STOP.test(w) || w.length < 3)) return false;
+  return words.every((w) => /^[\p{L}\p{M}.'’-]+$/u.test(w));
+}
+
+function explicitLead(text: string): boolean {
+  const s = String(text || "");
+  if (isAtlasPayCta(s) && !looksDataQuestion(s)) return true;
+  if (looksDataQuestion(s)) return false;
+  return LEAD_WORD.test(s);
+}
+
+/** Election question even without an Atlas URL — e.g. "Bihar 2020" or a leader name. */
+export function isAtlasQuestion(text: string): boolean {
   const s = String(text || "").trim();
   if (!s) return false;
   if (isAtlasLead(s) || isAtlasPayCta(s)) return true;
   if (/^\s*(atlas|ask|एटलस)\s*$/i.test(s)) return true;
+  if (looksDataQuestion(s)) return true;
   const year = /\b(19[5-9]\d|20[0-2]\d)\b/.test(s);
   const election =
     /lok sabha|vidhan sabha|विधानसभा|लोकसभा|assembly|who won|winner|कौन जीता|कितनी सीट|vote share|\bseats?\b/i.test(s);
@@ -327,6 +359,29 @@ function atlasReply(hi: boolean): string {
   ].join("\n");
 }
 
+function atlasMiss(hi: boolean): string {
+  if (hi) return "अभी Atlas तक पहुँच नहीं हो पाया। वही सवाल फिर लिखें — सीट और साल, या नेता का नाम।";
+  return "The Atlas did not answer in time. Ask again — a seat and a year, or a leader.";
+}
+
+/** Data questions keep the Atlas text. The consulting/pay note is only for an explicit buy or consult, and only when Atlas itself did not answer. */
+export function chooseAtlasReply(body: string, atlasText: string | null, hi: boolean): { text: string; handler: string } {
+  const data = looksDataQuestion(body);
+  const got = atlasText && String(atlasText).trim();
+  if (got) {
+    const quota = /free answers are used|muft jawaab|मुफ्त जवाब/i.test(got);
+    return { text: got.slice(0, 4096), handler: quota ? "quota" : "engine" };
+  }
+  if (explicitLead(body) && !data) return { text: atlasReply(hi), handler: "access_enquiry" };
+  return { text: atlasMiss(hi), handler: "atlas_miss" };
+}
+
+async function replyAtlas(phone: string, body: string, hi: boolean): Promise<{ text: string; handler: string }> {
+  const asked = await atlasAskReply(phone, body);
+  if (asked && asked.text) return asked;
+  return chooseAtlasReply(body, null, hi);
+}
+
 function isAtlasPayCta(text: string): boolean {
   return /constituency dossier|commercial licence|pay for (ask|maps|atlas|a licence)|full candidate list|booth-level|booth file|credits\s*\/\s*subscription|regional maps and region-wise/i.test(
     text,
@@ -351,7 +406,7 @@ function atlasAskUrls(): string[] {
   return out;
 }
 
-async function atlasAskReply(phone: string, text: string): Promise<string | null> {
+async function atlasAskReply(phone: string, text: string): Promise<{ text: string; handler: string } | null> {
   const secret = (process.env.ATLAS_WA_SECRET || "").trim();
   if (!secret) return null;
   const bypass = (process.env.ATLAS_WA_BYPASS || "").trim();
@@ -366,7 +421,7 @@ async function atlasAskReply(phone: string, text: string): Promise<string | null
   const body = JSON.stringify({ phone, q: text });
   for (const url of atlasAskUrls()) {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 12000);
+    const t = setTimeout(() => ac.abort(), 28000);
     try {
       const r = await fetch(url, { method: "POST", headers, body, signal: ac.signal, redirect: "manual" });
       const loc = r.headers.get("location") || "";
@@ -379,14 +434,19 @@ async function atlasAskReply(phone: string, text: string): Promise<string | null
         console.log("[intake] atlas ask blocked", r.status);
         continue;
       }
-      let j: { text?: string } = {};
+      let j: { text?: string; handler?: string } = {};
       try {
-        j = JSON.parse(raw) as { text?: string };
+        j = JSON.parse(raw) as { text?: string; handler?: string };
       } catch {
         console.log("[intake] atlas ask not json", r.status);
         continue;
       }
-      if (j && j.text) return String(j.text).slice(0, 4096);
+      if (j && j.text) {
+        const textOut = String(j.text).slice(0, 4096);
+        const quota = /free answers are used|muft jawaab|मुफ्त जवाब/i.test(textOut);
+        const handler = String(j.handler || (quota ? "quota" : "engine"));
+        return { text: textOut, handler };
+      }
       console.log("[intake] atlas ask no text", r.status);
     } catch (err) {
       console.log("[intake] atlas ask error", (err as Error)?.name || "fail");
@@ -783,8 +843,8 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
   /* Stateless fallback */
   if (!db) {
     if (isText && isAtlasQuestion(body)) {
-      const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
-      await sendViaChannel(channel, senderKey, asked || atlasReply(hi), true);
+      const picked = await replyAtlas(senderKey, body, hi);
+      await sendViaChannel(channel, senderKey, picked.text, true);
       await emailTeam(channel, {
         subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}`,
         displayName: name || displayId,
@@ -902,16 +962,20 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
     c.role_raw = "atlas";
     c.geography = body.slice(0, 500);
     c.state = "HANDOFF";
-    const asked = isAtlasPayCta(body) ? null : await atlasAskReply(senderKey, body);
-    reply = asked || atlasReply(hi);
+    const picked = await replyAtlas(senderKey, body, hi);
+    reply = picked.text;
     await sendViaChannel(channel, senderKey, reply, true);
-    await db.logMessage(senderKey, channel, "out", "text", reply, null, 0, ["atlas"]);
+    await db.logMessage(senderKey, channel, "out", "text", reply, null, 0, ["atlas", picked.handler]);
     await db.saveContact(c);
     await emailTeam(channel, {
       subject: `${CHANNEL_LABEL[channel]} Atlas lead · ${name || senderKey}${susTag}`,
       displayName: name || displayId,
       rows: [...rowsBase, ["Kind", "Election Atlas"], ["First message", body.slice(0, 400)], ["Language", hi ? "Hindi" : "English"], ["Received", fmtTs(msg.timestamp)]],
-      note: asked ? "Atlas ask reply sent." : "Atlas pay link sent (ask API missed). After payment, run pipeline/issue_access.py.",
+      note: picked.handler === "access_enquiry"
+        ? "Atlas pay link sent (explicit buy/consult). After payment, run pipeline/issue_access.py."
+        : picked.handler === "atlas_miss"
+          ? "Atlas ask missed. Data question was not replaced with the consulting note."
+          : "Atlas ask reply sent.",
     });
     return;
   }
@@ -1053,10 +1117,10 @@ export async function handleInbound(msg: InboundMsg): Promise<void> {
 
     case "HANDOFF": {
       if (c.role_raw === "atlas" && isText) {
-        const asked = await atlasAskReply(senderKey, body);
-        const follow = asked || atlasReply(hi);
+        const picked = await replyAtlas(senderKey, body, hi);
+        const follow = picked.text;
         await sendViaChannel(channel, senderKey, follow, true);
-        await db.logMessage(senderKey, channel, "out", "text", follow, null, 0, ["atlas"]);
+        await db.logMessage(senderKey, channel, "out", "text", follow, null, 0, ["atlas", picked.handler]);
         return;
       }
       const transcript = await db.transcript(senderKey);
