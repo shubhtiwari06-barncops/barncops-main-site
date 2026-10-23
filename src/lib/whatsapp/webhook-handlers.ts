@@ -1,7 +1,5 @@
-import { verifyHubToken, verifyMetaSignature } from "./meta-sig.ts";
-import type { WaEvent } from "./route.ts";
-
-type Route = (ev: WaEvent) => Promise<unknown>;
+import { metaAppSecret, verifyHubToken, verifyMetaSignature } from "./meta-sig.ts";
+import { admit, handle, routeConfig, type RouteConfig, type RouteDeps, type WaEvent } from "./route.ts";
 
 type MetaMessage = {
   from: string;
@@ -58,25 +56,40 @@ export function eventsOf(payload: MetaWebhookPayload): WaEvent[] {
   return out;
 }
 
-async function liveRoute(): Promise<Route> {
+export async function liveDeps(): Promise<RouteDeps> {
   const R = await import("./route.ts");
   const E = await import("../intake-engine.ts");
   const store = await R.defaultStore();
-  const deps = {
+  return {
     store,
     now: () => Date.now(),
     atlas: E.atlasAnswer,
-    sendText: (id: string, to: string, body: string, preview?: boolean) => E.sendWhatsAppText(to, body, !!preview, id),
-    sendButton: (id: string, to: string, body: string, buttonId: string, title: string) => E.sendWhatsAppButton(to, body, buttonId, title, id),
-    email: (e: { subject: string; displayName: string; rows: Array<[string, string]>; note?: string }) => E.emailTeam("whatsapp", e),
+    sendText: (id, to, body, preview) => E.sendWhatsAppText(to, body, !!preview, id),
+    sendButton: (id, to, body, buttonId, title) => E.sendWhatsAppButton(to, body, buttonId, title, id),
+    email: (e) => E.emailTeam("whatsapp", e),
   };
-  return (ev) => R.routeEvent(ev, deps);
 }
 
-export async function handleWhatsAppWebhookPost(request: Request, route?: Route): Promise<Response> {
+type WaitUntil = (p: Promise<unknown>) => void;
+
+/** Vercel's per-request background hook; undefined elsewhere (then the work is awaited before the 200). */
+function vercelWaitUntil(): WaitUntil | undefined {
+  const ctx = (globalThis as Record<symbol, { get?: () => { waitUntil?: WaitUntil } | undefined } | undefined>)[Symbol.for("@vercel/request-context")];
+  const wu = ctx?.get?.()?.waitUntil;
+  return typeof wu === "function" ? wu : undefined;
+}
+
+export type WebhookOpts = { deps?: RouteDeps; cfg?: RouteConfig; waitUntil?: WaitUntil | null };
+
+/**
+ * Signature → parse → admit (route, type, Meta-id dedupe) → 200. Replies, rows and email run
+ * after the response via waitUntil, so Meta never waits on Atlas and never retries for slowness.
+ */
+export async function handleWhatsAppWebhookPost(request: Request, opts: WebhookOpts = {}): Promise<Response> {
+  const receivedAt = Date.now();
   const raw = Buffer.from(await request.arrayBuffer());
   const header = request.headers.get("x-hub-signature-256");
-  if (!verifyMetaSignature(raw, header, process.env.META_APP_SECRET)) {
+  if (!verifyMetaSignature(raw, header, metaAppSecret())) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -89,12 +102,27 @@ export async function handleWhatsAppWebhookPost(request: Request, route?: Route)
 
   try {
     const events = eventsOf(payload);
-    if (events.length) {
-      const run = route || (await liveRoute());
-      for (const ev of events) await run(ev);
+    if (!events.length) return new Response("ok", { status: 200 });
+    const deps = opts.deps || (await liveDeps());
+    const cfg = opts.cfg || routeConfig();
+    const admitted: WaEvent[] = [];
+    for (const ev of events) if (!(await admit(ev, deps, cfg))) admitted.push(ev);
+    if (admitted.length) {
+      const waitUntil = opts.waitUntil === null ? undefined : opts.waitUntil || vercelWaitUntil();
+      const work = async (bg: boolean) => {
+        for (const ev of admitted) {
+          try {
+            await handle(ev, deps, cfg, receivedAt, bg);
+          } catch (err) {
+            console.error("[whatsapp] handler error", (err as Error)?.message);
+          }
+        }
+      };
+      if (waitUntil) waitUntil(work(true));
+      else await work(false);
     }
   } catch (err) {
-    console.error("[whatsapp] handler error", err);
+    console.error("[whatsapp] handler error", (err as Error)?.message);
   }
   return new Response("ok", { status: 200 });
 }

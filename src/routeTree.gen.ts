@@ -25,11 +25,14 @@ import { Route as WorkRouteImport } from './routes/work'
 import { Route as ApiInfoRequestRouteImport } from './routes/api.info-request'
 import { Route as ApiIntakeRouteImport } from './routes/api.intake'
 import { Route as ApiPublicConfigRouteImport } from './routes/api.public-config'
+import { Route as ApiWaWarmRouteImport } from './routes/api.wa-warm'
 import { Route as ConsoleIndexRouteImport } from './routes/console.index'
 import { Route as ConsoleIntakeRouteImport } from './routes/console.intake'
 import { Route as ConsoleWhatsappRouteImport } from './routes/console.whatsapp'
 import { Route as InsightsIndexRouteImport } from './routes/insights.index'
 import { Route as InsightsSlugRouteImport } from './routes/insights.$slug'
+import { Route as AdminWaInboxIndexRouteImport } from './routes/admin.wa-inbox.index'
+import { Route as AdminWaInboxIdRouteImport } from './routes/admin.wa-inbox.$id'
 import { Route as ApiAdminIntakeRouteImport } from './routes/api.admin.intake'
 import { Route as ApiAdminWhatsappRouteImport } from './routes/api.admin.whatsapp'
 import { Route as ApiSocialWebhookRouteImport } from './routes/api.social.webhook'
@@ -118,6 +121,11 @@ const ApiPublicConfigRoute = ApiPublicConfigRouteImport.update({
   path: '/api/public-config',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWaWarmRoute = ApiWaWarmRouteImport.update({
+  id: '/api/wa-warm',
+  path: '/api/wa-warm',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -142,6 +150,16 @@ const InsightsSlugRoute = InsightsSlugRouteImport.update({
   id: '/$slug',
   path: '/$slug',
   getParentRoute: () => InsightsRoute,
+} as any)
+const AdminWaInboxIndexRoute = AdminWaInboxIndexRouteImport.update({
+  id: '/admin/wa-inbox/',
+  path: '/admin/wa-inbox/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminWaInboxIdRoute = AdminWaInboxIdRouteImport.update({
+  id: '/admin/wa-inbox/$id',
+  path: '/admin/wa-inbox/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAdminIntakeRoute = ApiAdminIntakeRouteImport.update({
   id: '/api/admin/intake',
@@ -196,11 +214,13 @@ export interface FileRoutesByFullPath {
   '/api/info-request': typeof ApiInfoRequestRoute
   '/api/intake': typeof ApiIntakeRoute
   '/api/public-config': typeof ApiPublicConfigRoute
+  '/api/wa-warm': typeof ApiWaWarmRoute
   '/console/intake': typeof ConsoleIntakeRoute
   '/console/whatsapp': typeof ConsoleWhatsappRoute
   '/insights/$slug': typeof InsightsSlugRoute
   '/console/': typeof ConsoleIndexRoute
   '/insights/': typeof InsightsIndexRoute
+  '/admin/wa-inbox/$id': typeof AdminWaInboxIdRoute
   '/api/admin/intake': typeof ApiAdminIntakeRoute
   '/api/admin/whatsapp': typeof ApiAdminWhatsappRoute
   '/api/social/webhook': typeof ApiSocialWebhookRoute
@@ -208,6 +228,7 @@ export interface FileRoutesByFullPath {
   '/api/whatsapp/send': typeof ApiWhatsappSendRoute
   '/api/whatsapp/webhook': typeof ApiWhatsappWebhookRoute
   '/api/x/webhook': typeof ApiXWebhookRoute
+  '/admin/wa-inbox/': typeof AdminWaInboxIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -224,11 +245,13 @@ export interface FileRoutesByTo {
   '/api/info-request': typeof ApiInfoRequestRoute
   '/api/intake': typeof ApiIntakeRoute
   '/api/public-config': typeof ApiPublicConfigRoute
+  '/api/wa-warm': typeof ApiWaWarmRoute
   '/console/intake': typeof ConsoleIntakeRoute
   '/console/whatsapp': typeof ConsoleWhatsappRoute
   '/insights/$slug': typeof InsightsSlugRoute
   '/console': typeof ConsoleIndexRoute
   '/insights': typeof InsightsIndexRoute
+  '/admin/wa-inbox/$id': typeof AdminWaInboxIdRoute
   '/api/admin/intake': typeof ApiAdminIntakeRoute
   '/api/admin/whatsapp': typeof ApiAdminWhatsappRoute
   '/api/social/webhook': typeof ApiSocialWebhookRoute
@@ -236,6 +259,7 @@ export interface FileRoutesByTo {
   '/api/whatsapp/send': typeof ApiWhatsappSendRoute
   '/api/whatsapp/webhook': typeof ApiWhatsappWebhookRoute
   '/api/x/webhook': typeof ApiXWebhookRoute
+  '/admin/wa-inbox': typeof AdminWaInboxIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -255,11 +279,13 @@ export interface FileRoutesById {
   '/api/info-request': typeof ApiInfoRequestRoute
   '/api/intake': typeof ApiIntakeRoute
   '/api/public-config': typeof ApiPublicConfigRoute
+  '/api/wa-warm': typeof ApiWaWarmRoute
   '/console/intake': typeof ConsoleIntakeRoute
   '/console/whatsapp': typeof ConsoleWhatsappRoute
   '/insights/$slug': typeof InsightsSlugRoute
   '/console/': typeof ConsoleIndexRoute
   '/insights/': typeof InsightsIndexRoute
+  '/admin/wa-inbox/$id': typeof AdminWaInboxIdRoute
   '/api/admin/intake': typeof ApiAdminIntakeRoute
   '/api/admin/whatsapp': typeof ApiAdminWhatsappRoute
   '/api/social/webhook': typeof ApiSocialWebhookRoute
@@ -267,6 +293,7 @@ export interface FileRoutesById {
   '/api/whatsapp/send': typeof ApiWhatsappSendRoute
   '/api/whatsapp/webhook': typeof ApiWhatsappWebhookRoute
   '/api/x/webhook': typeof ApiXWebhookRoute
+  '/admin/wa-inbox/': typeof AdminWaInboxIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -287,11 +314,13 @@ export interface FileRouteTypes {
     | '/api/info-request'
     | '/api/intake'
     | '/api/public-config'
+    | '/api/wa-warm'
     | '/console/intake'
     | '/console/whatsapp'
     | '/insights/$slug'
     | '/console/'
     | '/insights/'
+    | '/admin/wa-inbox/$id'
     | '/api/admin/intake'
     | '/api/admin/whatsapp'
     | '/api/social/webhook'
@@ -299,6 +328,7 @@ export interface FileRouteTypes {
     | '/api/whatsapp/send'
     | '/api/whatsapp/webhook'
     | '/api/x/webhook'
+    | '/admin/wa-inbox/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -315,11 +345,13 @@ export interface FileRouteTypes {
     | '/api/info-request'
     | '/api/intake'
     | '/api/public-config'
+    | '/api/wa-warm'
     | '/console/intake'
     | '/console/whatsapp'
     | '/insights/$slug'
     | '/console'
     | '/insights'
+    | '/admin/wa-inbox/$id'
     | '/api/admin/intake'
     | '/api/admin/whatsapp'
     | '/api/social/webhook'
@@ -327,6 +359,7 @@ export interface FileRouteTypes {
     | '/api/whatsapp/send'
     | '/api/whatsapp/webhook'
     | '/api/x/webhook'
+    | '/admin/wa-inbox'
   id:
     | '__root__'
     | '/'
@@ -345,11 +378,13 @@ export interface FileRouteTypes {
     | '/api/info-request'
     | '/api/intake'
     | '/api/public-config'
+    | '/api/wa-warm'
     | '/console/intake'
     | '/console/whatsapp'
     | '/insights/$slug'
     | '/console/'
     | '/insights/'
+    | '/admin/wa-inbox/$id'
     | '/api/admin/intake'
     | '/api/admin/whatsapp'
     | '/api/social/webhook'
@@ -357,6 +392,7 @@ export interface FileRouteTypes {
     | '/api/whatsapp/send'
     | '/api/whatsapp/webhook'
     | '/api/x/webhook'
+    | '/admin/wa-inbox/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -376,6 +412,8 @@ export interface RootRouteChildren {
   ApiInfoRequestRoute: typeof ApiInfoRequestRoute
   ApiIntakeRoute: typeof ApiIntakeRoute
   ApiPublicConfigRoute: typeof ApiPublicConfigRoute
+  ApiWaWarmRoute: typeof ApiWaWarmRoute
+  AdminWaInboxIdRoute: typeof AdminWaInboxIdRoute
   ApiAdminIntakeRoute: typeof ApiAdminIntakeRoute
   ApiAdminWhatsappRoute: typeof ApiAdminWhatsappRoute
   ApiSocialWebhookRoute: typeof ApiSocialWebhookRoute
@@ -383,6 +421,7 @@ export interface RootRouteChildren {
   ApiWhatsappSendRoute: typeof ApiWhatsappSendRoute
   ApiWhatsappWebhookRoute: typeof ApiWhatsappWebhookRoute
   ApiXWebhookRoute: typeof ApiXWebhookRoute
+  AdminWaInboxIndexRoute: typeof AdminWaInboxIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -499,6 +538,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicConfigRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/wa-warm': {
+      id: '/api/wa-warm'
+      path: '/api/wa-warm'
+      fullPath: '/api/wa-warm'
+      preLoaderRoute: typeof ApiWaWarmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/console/': {
       id: '/console/'
       path: '/'
@@ -533,6 +579,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/insights/$slug'
       preLoaderRoute: typeof InsightsSlugRouteImport
       parentRoute: typeof InsightsRoute
+    }
+    '/admin/wa-inbox/': {
+      id: '/admin/wa-inbox/'
+      path: '/admin/wa-inbox'
+      fullPath: '/admin/wa-inbox/'
+      preLoaderRoute: typeof AdminWaInboxIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/wa-inbox/$id': {
+      id: '/admin/wa-inbox/$id'
+      path: '/admin/wa-inbox/$id'
+      fullPath: '/admin/wa-inbox/$id'
+      preLoaderRoute: typeof AdminWaInboxIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/admin/intake': {
       id: '/api/admin/intake'
@@ -632,6 +692,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInfoRequestRoute: ApiInfoRequestRoute,
   ApiIntakeRoute: ApiIntakeRoute,
   ApiPublicConfigRoute: ApiPublicConfigRoute,
+  ApiWaWarmRoute: ApiWaWarmRoute,
+  AdminWaInboxIdRoute: AdminWaInboxIdRoute,
   ApiAdminIntakeRoute: ApiAdminIntakeRoute,
   ApiAdminWhatsappRoute: ApiAdminWhatsappRoute,
   ApiSocialWebhookRoute: ApiSocialWebhookRoute,
@@ -639,6 +701,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiWhatsappSendRoute: ApiWhatsappSendRoute,
   ApiWhatsappWebhookRoute: ApiWhatsappWebhookRoute,
   ApiXWebhookRoute: ApiXWebhookRoute,
+  AdminWaInboxIndexRoute: AdminWaInboxIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

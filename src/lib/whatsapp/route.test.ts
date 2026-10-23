@@ -4,18 +4,20 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { handleWhatsAppWebhookPost } from "./webhook-handlers.ts";
 import { signMetaBody } from "./meta-sig.ts";
-import { TEAM_BUTTON_ID, counters, memoryStore, routeConfig, routeEvent, sqlStore, tagSource, type RouteConfig, type Store } from "./route.ts";
+import { COPY, TEAM_BUTTON_ID, counters, memoryStore, routeConfig, sqlStore, tagSource, timingSummary, type AtlasReply, type RouteConfig, type RouteDeps, type Store } from "./route.ts";
 
 const SECRET = "test-meta-app-secret-do-not-use-live";
 const TAG = "#BCteam";
-const MIGRATION = readFileSync(new URL("../../../migrations/0004_wa_routing.sql", import.meta.url), "utf8");
+export const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 
 type Sent = { line: string; to: string; body: string; button?: string };
 
 /** A test rig: fake senders and email, a clock, a store, and counts read back from the store. */
-async function rig(kind: "memory" | "sql", env: Record<string, string>) {
+type RigOpts = { atlasMs?: number; waitUntil?: (p: Promise<unknown>) => void };
+
+async function rig(kind: "memory" | "sql", env: Record<string, string>, opts: RigOpts = {}) {
   let store: Store;
   let rows: () => Promise<{ seen: number; inquiries: number; entriesIn: number; entriesOut: number }>;
   if (kind === "memory") {
@@ -29,7 +31,7 @@ async function rig(kind: "memory" | "sql", env: Record<string, string>) {
     });
   } else {
     const db = new PGlite();
-    await db.exec(MIGRATION);
+    for (const m of MIGRATIONS) await db.exec(m);
     store = sqlStore((sql, params) => db.query(sql, params as unknown[]) as Promise<{ rows: Array<Record<string, unknown>> }>);
     const n = async (sql: string) => Number(((await db.query(sql)).rows[0] as { n: number }).n);
     rows = async () => ({
@@ -43,17 +45,20 @@ async function rig(kind: "memory" | "sql", env: Record<string, string>) {
   const sent: Sent[] = [];
   const emails: Array<{ subject: string; rows: Array<[string, string]> }> = [];
   let clock = Date.parse("2026-10-23T08:00:00Z");
-  const deps = {
+  const deps: RouteDeps = {
     store,
     now: () => clock,
-    atlas: async () => "Atlas answer.",
-    sendText: async (line: string, to: string, body: string) => {
+    atlas: async (): Promise<AtlasReply> => {
+      if (opts.atlasMs) await new Promise((r) => setTimeout(r, opts.atlasMs));
+      return { text: "Atlas answer.", handler: "engine", modelCalls: 1, engineMs: 5 };
+    },
+    sendText: async (line, to, body) => {
       sent.push({ line, to, body });
     },
-    sendButton: async (line: string, to: string, body: string, button: string) => {
+    sendButton: async (line, to, body, button) => {
       sent.push({ line, to, body, button });
     },
-    email: async (e: { subject: string; rows: Array<[string, string]> }) => {
+    email: async (e) => {
       emails.push(e);
     },
   };
@@ -65,8 +70,9 @@ async function rig(kind: "memory" | "sql", env: Record<string, string>) {
       headers: { "content-type": "application/json", "x-hub-signature-256": signMetaBody(body, SECRET) },
       body,
     });
-    const res = await handleWhatsAppWebhookPost(req, (ev) => routeEvent(ev, deps, cfg));
+    const res = await handleWhatsAppWebhookPost(req, { deps, cfg, waitUntil: opts.waitUntil || null });
     assert.equal(res.status, 200);
+    return res;
   };
   const message = (line: string, from: string, msg: Record<string, unknown>) => ({
     object: "whatsapp_business_account",
@@ -76,6 +82,7 @@ async function rig(kind: "memory" | "sql", env: Record<string, string>) {
   const tap = (line: string, from: string) =>
     message(line, from, { type: "interactive", interactive: { type: "button_reply", button_reply: { id: TEAM_BUTTON_ID, title: "Talk to the team" } } });
   return {
+    store,
     sent,
     emails,
     rows,
@@ -120,7 +127,9 @@ for (const kind of ["memory", "sql"] as const) {
       const n = await r.rows();
       assert.equal(r.emails.length, 1);
       assert.match(r.emails[0].subject, /^\[Business • WhatsApp • web\] \+919800000002/);
-      assert.ok(r.emails[0].rows.some(([k, v]) => k === "Chat" && v === "https://wa.me/919800000002"));
+      assert.ok(r.emails[0].rows.some(([k, v]) => k === "Reply in the inbox" && v === "https://www.barncops.in/admin/wa-inbox/1"));
+      assert.ok(r.emails[0].rows.every(([, v]) => !v.includes("wa.me/")), "no wa.me link to the customer");
+      assert.equal(r.sent[0].body, COPY.ack.en);
       assert.ok(r.emails[0].rows.some(([k, v]) => k === "Customer number" && v === "+919800000002"));
       assert.equal(r.sent.length, 1, "only the ack is sent");
       assert.equal(n.inquiries, 1);
@@ -192,6 +201,54 @@ for (const kind of ["memory", "sql"] as const) {
       assert.equal(r.emails.length, 2);
       assert.match(r.emails[1].subject, /• ig\]/);
     });
+
+    it("business ack follows the customer's language (Hindi message → Hindi ack)", async () => {
+      const r = await rig(kind, SHARED);
+      await r.post(r.text("111", "919800000020", `नमस्ते, मुझे टीम से बात करनी है ${TAG}-web`));
+      assert.equal(r.sent[0].body, COPY.ack.hi);
+      await r.post(r.text("111", "919800000021", `Hello ${TAG}-web`));
+      assert.equal(r.sent[1].body, COPY.ack.en);
+      assert.match(COPY.ack.en, /name, constituency\/organisation and requirement in one message/);
+    });
+
+    it("slow Atlas answer → Checking… first, then the answer; fast answer → no Checking…", async () => {
+      const slow = await rig(kind, { ...SHARED, WA_ACK_AFTER_MS: "20" }, { atlasMs: 120 });
+      await slow.post(slow.text("111", "919800000022", "bihar 2020 result"));
+      assert.deepEqual(slow.sent.map((s) => s.body), [COPY.checking.en, "Atlas answer."]);
+      const fast = await rig(kind, { ...SHARED, WA_ACK_AFTER_MS: "500" });
+      await fast.post(fast.text("111", "919800000023", "bihar 2020 result"));
+      assert.deepEqual(fast.sent.map((s) => s.body), ["Atlas answer."]);
+    });
+
+    it("200 is returned before the work; the work runs in waitUntil", async () => {
+      const pending: Array<Promise<unknown>> = [];
+      const r = await rig(kind, SHARED, { atlasMs: 80, waitUntil: (p) => void pending.push(p) });
+      await r.post(r.text("111", "919800000024", "bihar 2020 result"));
+      assert.equal(pending.length, 1);
+      assert.equal(r.sent.length, 0, "nothing sent before the 200");
+      await Promise.all(pending);
+      assert.equal(r.sent.at(-1)?.body, "Atlas answer.");
+      const replay = r.text("111", "919800000024", "bihar 2020 result");
+      await r.post(replay);
+      await r.post(replay);
+      assert.equal(pending.length, 2, "a replay is dropped before the 200, nothing queued");
+    });
+
+    it("one timing row per handled message, no text or number in it", async () => {
+      const r = await rig(kind, SHARED);
+      await r.post(r.text("111", "919800000025", "bihar 2020 result"));
+      await r.post(r.text("111", "919800000026", `hi ${TAG}-web`));
+      const rows = await r.store.timings(10);
+      assert.equal(rows.length, 2);
+      const atlas = rows.find((t) => t.outcome === "atlas")!;
+      assert.equal(atlas.modelCalls, 1);
+      assert.equal(atlas.engineMs, 5);
+      assert.ok(atlas.engineStart != null && atlas.engineEnd != null && atlas.sentAt != null);
+      assert.ok(rows.find((t) => t.outcome === "inquiry_opened")!.ackedAt != null);
+      const flat = JSON.stringify(rows);
+      assert.ok(!flat.includes("bihar") && !flat.includes("919800000025"));
+      assert.equal(timingSummary(rows).n, 1);
+    });
   });
 
   describe(`WhatsApp routing, two numbers (${kind} store)`, () => {
@@ -236,6 +293,33 @@ for (const kind of ["memory", "sql"] as const) {
     });
   });
 }
+
+describe("timing summary", () => {
+  it("p50/p95 of first reply and full answer from webhook receipt", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      wamid: `w${i}`,
+      phoneNumberId: "111",
+      outcome: "atlas",
+      receivedAt: 0,
+      ackedAt: i >= 18 ? 1200 : null,
+      engineStart: 10,
+      engineEnd: 100 * (i + 1),
+      sentAt: 100 * (i + 1) + 50,
+      modelCalls: i % 2,
+      engineMs: null,
+      handler: "engine",
+      background: true,
+    }));
+    const s = timingSummary(rows);
+    assert.equal(s.n, 20);
+    assert.equal(s.answer.p50, 1050);
+    assert.equal(s.answer.p95, 1950);
+    assert.equal(s.first_reply.p95, 1750);
+    assert.equal(s.first_reply.p50, 1050);
+    assert.equal(s.acked, 2);
+    assert.equal(s.model_calls_avg, 0.5);
+  });
+});
 
 describe("tag source", () => {
   it("reads the source after the tag, any case", () => {

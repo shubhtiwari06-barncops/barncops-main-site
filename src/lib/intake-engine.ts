@@ -382,7 +382,12 @@ function checkingLine(hi: boolean, body: string): string {
   return "Checking…";
 }
 
-/** If Atlas will take >5s, send a short Checking… ping first, then the answer. */
+function ackAfterMs(): number {
+  const n = Number(process.env.WA_ACK_AFTER_MS || 1200);
+  return n >= 0 ? n : 1200;
+}
+
+/** If Atlas is not back within WA_ACK_AFTER_MS, send a short Checking… ping first, then the answer. */
 async function replyAtlas(
   phone: string,
   body: string,
@@ -394,7 +399,7 @@ async function replyAtlas(
   const timer = setTimeout(() => {
     checkingSent = true;
     void sendViaChannel(channel, phone, checkingLine(hi, body), false, phoneNumberId).catch(() => {});
-  }, 5000);
+  }, ackAfterMs());
   try {
     const asked = await atlasAskReply(phone, body);
     if (asked && asked.text) {
@@ -413,9 +418,17 @@ async function replyAtlas(
   }
 }
 
-/** The Ask Atlas reply text for one WhatsApp message on the given line (no rows, no email). */
-export async function atlasAnswer(phoneNumberId: string, phone: string, body: string, hi: boolean): Promise<string> {
-  return (await replyAtlas(phone, body, hi, "whatsapp", phoneNumberId)).text;
+/** One Ask Atlas answer for a WhatsApp message (no ack, no rows, no email — the router owns those). */
+export async function atlasAnswer(
+  _phoneNumberId: string,
+  phone: string,
+  body: string,
+  hi: boolean,
+): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null }> {
+  const asked = await atlasAskReply(phone, body);
+  if (asked && asked.text) return asked;
+  const miss = chooseAtlasReply(body, null, hi);
+  return { text: miss.text, handler: miss.handler, modelCalls: null, engineMs: null };
 }
 
 function isAtlasPayCta(text: string): boolean {
@@ -442,7 +455,7 @@ function atlasAskUrls(): string[] {
   return out;
 }
 
-async function atlasAskReply(phone: string, text: string): Promise<{ text: string; handler: string } | null> {
+async function atlasAskReply(phone: string, text: string): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null } | null> {
   const secret = (process.env.ATLAS_WA_SECRET || "").trim();
   if (!secret) return null;
   const bypass = (process.env.ATLAS_WA_BYPASS || "").trim();
@@ -470,9 +483,9 @@ async function atlasAskReply(phone: string, text: string): Promise<{ text: strin
         console.log("[intake] atlas ask blocked", r.status);
         continue;
       }
-      let j: { text?: string; handler?: string } = {};
+      let j: { text?: string; handler?: string; model_calls?: number; engine_ms?: number } = {};
       try {
-        j = JSON.parse(raw) as { text?: string; handler?: string };
+        j = JSON.parse(raw) as typeof j;
       } catch {
         console.log("[intake] atlas ask not json", r.status);
         continue;
@@ -481,7 +494,8 @@ async function atlasAskReply(phone: string, text: string): Promise<{ text: strin
         const textOut = String(j.text).slice(0, 4096);
         const quota = /free answers are used|muft jawaab|मुफ्त जवाब/i.test(textOut);
         const handler = String(j.handler || (quota ? "quota" : "engine"));
-        return { text: textOut, handler };
+        const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+        return { text: textOut, handler, modelCalls: num(j.model_calls), engineMs: num(j.engine_ms) };
       }
       console.log("[intake] atlas ask no text", r.status);
     } catch (err) {
@@ -715,29 +729,45 @@ async function getDb(): Promise<Db | null> {
    ═══════════════════════════════════════════════════════════════════ */
 
 /** Sends from the line that received the message; WHATSAPP_PHONE_NUMBER_ID when none is given. */
-async function graphWhatsApp(phoneNumberId: string | null | undefined, payload: Record<string, unknown>): Promise<void> {
+export type SendResult = { ok: boolean; error?: string };
+
+async function graphWhatsApp(phoneNumberId: string | null | undefined, payload: Record<string, unknown>): Promise<SendResult> {
   const token = process.env.WHATSAPP_BUSINESS_TOKEN;
   const phoneId = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
-  if (!token || !phoneId) return console.warn("[intake] whatsapp send skipped — missing credentials");
+  if (!token || !phoneId) {
+    console.warn("[intake] whatsapp send skipped — missing credentials");
+    return { ok: false, error: "missing credentials" };
+  }
   try {
     const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...payload }),
     });
-    if (!res.ok) console.error("[intake] whatsapp send failed", res.status, (await res.text()).slice(0, 500));
-    else console.log("[intake] whatsapp reply sent");
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 500);
+      console.error("[intake] whatsapp send failed", res.status, detail);
+      return { ok: false, error: `Meta ${res.status}: ${detail.slice(0, 200)}` };
+    }
+    console.log("[intake] whatsapp reply sent");
+    return { ok: true };
   } catch (err) {
     console.error("[intake] whatsapp send error", err);
+    return { ok: false, error: "network error" };
   }
 }
 
-export async function sendWhatsAppText(to: string, body: string, previewUrl = false, phoneNumberId?: string | null): Promise<void> {
+export async function sendWhatsAppText(to: string, body: string, previewUrl = false, phoneNumberId?: string | null): Promise<SendResult> {
   return graphWhatsApp(phoneNumberId, { to, type: "text", text: { preview_url: !!previewUrl, body } });
 }
 
+/** An approved template with no variables — the only message Meta allows outside the 24 h window. */
+export async function sendWhatsAppTemplate(to: string, name: string, lang: string, phoneNumberId?: string | null): Promise<SendResult> {
+  return graphWhatsApp(phoneNumberId, { to, type: "template", template: { name, language: { code: lang } } });
+}
+
 /** One reply button (title ≤ 20 characters). */
-export async function sendWhatsAppButton(to: string, body: string, buttonId: string, title: string, phoneNumberId?: string | null): Promise<void> {
+export async function sendWhatsAppButton(to: string, body: string, buttonId: string, title: string, phoneNumberId?: string | null): Promise<SendResult> {
   return graphWhatsApp(phoneNumberId, {
     to,
     type: "interactive",
@@ -807,7 +837,10 @@ async function sendXDM(toUserId: string, body: string): Promise<void> {
 }
 
 async function sendViaChannel(channel: Channel, senderKey: string, body: string, previewUrl = false, phoneNumberId?: string | null): Promise<void> {
-  if (channel === "whatsapp") return sendWhatsAppText(senderKey, body, previewUrl, phoneNumberId);
+  if (channel === "whatsapp") {
+    await sendWhatsAppText(senderKey, body, previewUrl, phoneNumberId);
+    return;
+  }
   if (channel === "x") return sendXDM(senderKey, body);
   return sendMetaDM(channel, senderKey, body);
 }

@@ -28,6 +28,16 @@ export function verifyMetaSignature(
   return safeEqualStr(given.toLowerCase(), expected);
 }
 
+/**
+ * The app secret Meta signs with: META_APP_SECRET, else WHATSAPP_APP_SECRET. When neither is set
+ * every POST is refused (never accepted unsigned) and the error is logged on each request.
+ */
+export function metaAppSecret(env: Record<string, string | undefined> = process.env): string | undefined {
+  const s = (env.META_APP_SECRET || "").trim() || (env.WHATSAPP_APP_SECRET || "").trim();
+  if (!s) console.error("[whatsapp] SIGNATURE SECRET MISSING — set META_APP_SECRET (or WHATSAPP_APP_SECRET); every webhook POST is refused with 401");
+  return s || undefined;
+}
+
 export function verifyHubToken(token: string | null, expected: string | undefined): boolean {
   if (!token || !expected) return false;
   return safeEqualStr(token, expected);
