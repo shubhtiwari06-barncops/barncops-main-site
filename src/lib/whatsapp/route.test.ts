@@ -4,12 +4,12 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { handleWhatsAppWebhookPost } from "./webhook-handlers.ts";
 import { signMetaBody } from "./meta-sig.ts";
-import { atlasSecretCheck, atlasUrlKind, dbHealth, missingEnv, phoneIdCheck } from "./health.ts";
+import { atlasSecretCheck, atlasUrlKind, dbHealth, missingEnv, phoneIdCheck, testNumberStatus } from "./health.ts";
 import { COPY, TEAM_BUTTON_ID, counters, memoryStore, routeConfig, sqlStore, tagSource, timingSummary, type AtlasReply, type RouteConfig, type RouteDeps, type Store } from "./route.ts";
 
 const SECRET = "test-meta-app-secret-do-not-use-live";
 const TAG = "#BCteam";
-export const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql", "0006_wa_webhook_events.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
+export const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql", "0006_wa_webhook_events.sql", "0007_wa_inquiry_close.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 
@@ -425,6 +425,95 @@ describe("silent-line diagnosis (hotfix)", () => {
   });
 });
 
+describe("silence: test numbers, close & resume, per-number status", () => {
+  const OWNER = "919800000501";
+  const signed = (line: string, id: string, body: string, from = OWNER) => {
+    const raw = Buffer.from(
+      JSON.stringify({ entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: line }, messages: [{ from, id, type: "text", text: { body } }] } }] }] }),
+      "utf8",
+    );
+    return new Request("https://www.barncops.in/api/whatsapp/webhook", { method: "POST", headers: { "x-hub-signature-256": signMetaBody(raw, SECRET) }, body: new Uint8Array(raw) });
+  };
+  const make = async (kind: "memory" | "sql") => {
+    let store: Store;
+    if (kind === "memory") store = memoryStore();
+    else {
+      const db = new PGlite();
+      for (const m of MIGRATIONS) await db.exec(m);
+      store = sqlStore((sql, params) => db.query(sql, params as unknown[]) as Promise<{ rows: Array<Record<string, unknown>> }>);
+    }
+    const sent: Array<{ to: string; body: string }> = [];
+    const deps: RouteDeps = {
+      store,
+      now: () => Date.now(),
+      atlas: async () => ({ text: "Atlas answer.", handler: "engine", modelCalls: 0, engineMs: 1 }),
+      sendText: async (_l, to, body) => void sent.push({ to, body }),
+      sendButton: async () => {},
+      email: async () => {},
+    };
+    return { store, sent, deps };
+  };
+  const ENV = { WHATSAPP_PHONE_NUMBER_ID: "111", WA_BUSINESS_TAG: TAG, WA_TEST_NUMBERS: " +91 98000 00501 , 9800000999" };
+
+  for (const kind of ["memory", "sql"] as const) {
+    it(`${kind}: a WA_TEST_NUMBERS number is queued for the team during silence and still answered by the bot`, async () => {
+      const { store, sent, deps } = await make(kind);
+      const cfg = routeConfig(ENV);
+      await handleWhatsAppWebhookPost(signed("111", `w.t1-${kind}`, `hi ${TAG}-web`), { deps, cfg, waitUntil: null });
+      await handleWhatsAppWebhookPost(signed("111", `w.t2-${kind}`, "bihar 2020 result"), { deps, cfg, waitUntil: null });
+      assert.deepEqual(sent.map((s) => s.body), [COPY.ack.en, "Atlas answer."]);
+      const thread = await store.thread(1);
+      assert.equal(thread.filter((e) => e.direction === "in").length, 2, "both messages are queued for the team");
+      const h = await store.health(Date.now());
+      assert.equal(h.test_numbers_1h.business, 1);
+      assert.equal(h.test_numbers_1h.test_not_silenced, 1);
+      assert.equal(h.test_numbers_1h.atlas, 1);
+    });
+
+    it(`${kind}: any other number stays silenced (verdict business_silenced) until "Close & resume bot"`, async () => {
+      const { store, sent, deps } = await make(kind);
+      const cfg = routeConfig(ENV);
+      const other = "919800000777";
+      await handleWhatsAppWebhookPost(signed("111", `w.o1-${kind}`, `hi ${TAG}-web`, other), { deps, cfg, waitUntil: null });
+      await handleWhatsAppWebhookPost(signed("111", `w.o2-${kind}`, "bihar 2020 result", other), { deps, cfg, waitUntil: null });
+      assert.deepEqual(sent.map((s) => s.body), [COPY.ack.en]);
+      assert.equal((await store.health(Date.now())).last_30min["business_silenced:atlas+business+default"], 1);
+      await store.closeInquiry(1, Date.now());
+      await handleWhatsAppWebhookPost(signed("111", `w.o3-${kind}`, "bihar 2020 result", other), { deps, cfg, waitUntil: null });
+      assert.equal(sent.at(-1)?.body, "Atlas answer.", "the bot answers again after close");
+    });
+
+    it(`${kind}: per-number status reports silence by list position, never the number`, async () => {
+      const { store, deps } = await make(kind);
+      const cfg = routeConfig(ENV);
+      await handleWhatsAppWebhookPost(signed("111", `w.s1-${kind}`, `hi ${TAG}-web`), { deps, cfg, waitUntil: null });
+      const st = await testNumberStatus(store, ENV, Date.now());
+      assert.equal(st.length, 2);
+      assert.equal(st[0].silenced, true);
+      assert.equal(st[0].source, "web");
+      assert.equal(st[0].messages_queued_1h, 1);
+      assert.ok((st[0].silence_left_min as number) > 1400);
+      assert.equal(st[1].silenced, false);
+      assert.ok(!JSON.stringify(st).includes("98000"));
+      await store.closeInquiry(st[0].inquiry_id as number, Date.now());
+      assert.equal((await testNumberStatus(store, ENV, Date.now()))[0].silenced, false);
+    });
+  }
+
+  it("mode and raw byte equality of the three ids (lengths only)", () => {
+    const same = phoneIdCheck({ WHATSAPP_PHONE_NUMBER_ID: "1234567890123", WA_BUSINESS_PHONE_ID: "1234567890123" });
+    assert.equal(same.mode, "shared");
+    assert.equal(same.consistent, true);
+    const spaced = phoneIdCheck({ WHATSAPP_PHONE_NUMBER_ID: "1234567890123", WA_BUSINESS_PHONE_ID: "1234567890123 " });
+    assert.equal(spaced.raw_bytes.business_equals_default, false);
+    assert.equal(spaced.raw_bytes.WA_BUSINESS_PHONE_ID_length, 14);
+    assert.equal(spaced.mode, "shared", "a trailing space no longer splits the line into two-number mode");
+    const two = phoneIdCheck({ WHATSAPP_PHONE_NUMBER_ID: "1234567890123", WA_BUSINESS_PHONE_ID: "919522236699" });
+    assert.equal(two.mode, "two-number");
+    assert.ok(!JSON.stringify([same, spaced, two]).includes("1234567890123"));
+  });
+});
+
 describe("deploy health (names only)", () => {
   it("missing env names, Atlas host kind, never a value", () => {
     const env = { META_APP_SECRET: "s3cret-value", ATLAS_WA_ASK_URL: "https://atlas.barncops.in/api/wa-ask/" };
@@ -448,6 +537,7 @@ describe("deploy health (names only)", () => {
     const h = await dbHealth(q);
     assert.deepEqual(h.missing_tables, []);
     assert.deepEqual(h.migrations, ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql", "0006_wa_webhook_events.sql"]);
+    assert.deepEqual(h.missing_columns, []);
   });
 });
 

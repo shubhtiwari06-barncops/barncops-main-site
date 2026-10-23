@@ -55,10 +55,16 @@ export const Route = createFileRoute("/api/wa-warm")({
         const ids = H.phoneIdCheck(process.env);
         const secret = await H.atlasSecretCheck(process.env);
         let webhook: unknown = "unavailable";
+        let testNumbers: unknown = "unavailable";
         try {
           webhook = await store.health(Date.now());
         } catch {
           webhook = "unavailable";
+        }
+        try {
+          testNumbers = await H.testNumberStatus(store, process.env, Date.now());
+        } catch {
+          testNumbers = "unavailable";
         }
         return Response.json(
           {
@@ -69,7 +75,10 @@ export const Route = createFileRoute("/api/wa-warm")({
             atlas_secret_ok: secret.ok,
             atlas_secret_status: secret.status,
             phone_ids_consistent: ids.consistent,
+            mode: ids.mode,
             phone_ids: ids.detail,
+            phone_ids_raw: ids.raw_bytes,
+            test_numbers: testNumbers,
             env_missing: H.missingEnv(process.env),
             db,
             webhook,
