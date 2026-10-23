@@ -388,11 +388,12 @@ async function replyAtlas(
   body: string,
   hi: boolean,
   channel: Channel = "whatsapp",
+  phoneNumberId?: string | null,
 ): Promise<{ text: string; handler: string }> {
   let checkingSent = false;
   const timer = setTimeout(() => {
     checkingSent = true;
-    void sendViaChannel(channel, phone, checkingLine(hi, body)).catch(() => {});
+    void sendViaChannel(channel, phone, checkingLine(hi, body), false, phoneNumberId).catch(() => {});
   }, 5000);
   try {
     const asked = await atlasAskReply(phone, body);
@@ -410,6 +411,11 @@ async function replyAtlas(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The Ask Atlas reply text for one WhatsApp message on the given line (no rows, no email). */
+export async function atlasAnswer(phoneNumberId: string, phone: string, body: string, hi: boolean): Promise<string> {
+  return (await replyAtlas(phone, body, hi, "whatsapp", phoneNumberId)).text;
 }
 
 function isAtlasPayCta(text: string): boolean {
@@ -708,21 +714,35 @@ async function getDb(): Promise<Db | null> {
    9. Outbound senders — one per channel
    ═══════════════════════════════════════════════════════════════════ */
 
-async function sendWhatsAppText(to: string, body: string, previewUrl = false): Promise<void> {
+/** Sends from the line that received the message; WHATSAPP_PHONE_NUMBER_ID when none is given. */
+async function graphWhatsApp(phoneNumberId: string | null | undefined, payload: Record<string, unknown>): Promise<void> {
   const token = process.env.WHATSAPP_BUSINESS_TOKEN;
-  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const phoneId = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return console.warn("[intake] whatsapp send skipped — missing credentials");
   try {
     const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "text", text: { preview_url: !!previewUrl, body } }),
+      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...payload }),
     });
     if (!res.ok) console.error("[intake] whatsapp send failed", res.status, (await res.text()).slice(0, 500));
-    else console.log("[intake] whatsapp reply sent to", to);
+    else console.log("[intake] whatsapp reply sent");
   } catch (err) {
     console.error("[intake] whatsapp send error", err);
   }
+}
+
+export async function sendWhatsAppText(to: string, body: string, previewUrl = false, phoneNumberId?: string | null): Promise<void> {
+  return graphWhatsApp(phoneNumberId, { to, type: "text", text: { preview_url: !!previewUrl, body } });
+}
+
+/** One reply button (title ≤ 20 characters). */
+export async function sendWhatsAppButton(to: string, body: string, buttonId: string, title: string, phoneNumberId?: string | null): Promise<void> {
+  return graphWhatsApp(phoneNumberId, {
+    to,
+    type: "interactive",
+    interactive: { type: "button", body: { text: body }, action: { buttons: [{ type: "reply", reply: { id: buttonId, title: title.slice(0, 20) } }] } },
+  });
 }
 
 async function sendMetaDM(channel: "messenger" | "instagram", toId: string, body: string): Promise<void> {
@@ -786,8 +806,8 @@ async function sendXDM(toUserId: string, body: string): Promise<void> {
   }
 }
 
-async function sendViaChannel(channel: Channel, senderKey: string, body: string, previewUrl = false): Promise<void> {
-  if (channel === "whatsapp") return sendWhatsAppText(senderKey, body, previewUrl);
+async function sendViaChannel(channel: Channel, senderKey: string, body: string, previewUrl = false, phoneNumberId?: string | null): Promise<void> {
+  if (channel === "whatsapp") return sendWhatsAppText(senderKey, body, previewUrl, phoneNumberId);
   if (channel === "x") return sendXDM(senderKey, body);
   return sendMetaDM(channel, senderKey, body);
 }
@@ -806,7 +826,7 @@ function fmtTs(unix?: string | null): string {
   return n ? new Date(n).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "—";
 }
 
-async function emailTeam(channel: Channel, opts: {
+export async function emailTeam(channel: Channel, opts: {
   subject: string;
   displayName: string;
   rows: Array<[string, string]>;
