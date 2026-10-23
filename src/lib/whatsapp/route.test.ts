@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { handleWhatsAppWebhookPost } from "./webhook-handlers.ts";
 import { signMetaBody } from "./meta-sig.ts";
+import { atlasUrlKind, dbHealth, missingEnv } from "./health.ts";
 import { COPY, TEAM_BUTTON_ID, counters, memoryStore, routeConfig, sqlStore, tagSource, timingSummary, type AtlasReply, type RouteConfig, type RouteDeps, type Store } from "./route.ts";
 
 const SECRET = "test-meta-app-secret-do-not-use-live";
@@ -293,6 +294,56 @@ for (const kind of ["memory", "sql"] as const) {
     });
   });
 }
+
+describe("store failure", () => {
+  it("a broken database never drops an Atlas answer; replays are still caught in-instance", async () => {
+    const db = new PGlite();
+    const broken = sqlStore((sql, params) => db.query(sql, params as unknown[]) as Promise<{ rows: Array<Record<string, unknown>> }>);
+    const sent: string[] = [];
+    const deps: RouteDeps = {
+      store: broken,
+      now: () => Date.now(),
+      atlas: async () => ({ text: "Atlas answer.", handler: "engine", modelCalls: 0, engineMs: 1 }),
+      sendText: async (_l, _t, body) => void sent.push(body),
+      sendButton: async () => {},
+      email: async () => {},
+    };
+    const cfg = routeConfig(SHARED);
+    const payload = {
+      entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "111" }, messages: [{ from: "919800000301", id: "wamid.broken1", type: "text", text: { body: "bihar 2020 result" } }] } }] }],
+    };
+    const body = Buffer.from(JSON.stringify(payload), "utf8");
+    const req = () =>
+      new Request("https://www.barncops.in/api/whatsapp/webhook", { method: "POST", headers: { "x-hub-signature-256": signMetaBody(body, SECRET) }, body: new Uint8Array(body) });
+    assert.equal((await handleWhatsAppWebhookPost(req(), { deps, cfg, waitUntil: null })).status, 200);
+    assert.equal((await handleWhatsAppWebhookPost(req(), { deps, cfg, waitUntil: null })).status, 200);
+    assert.deepEqual(sent, ["Atlas answer."]);
+  });
+});
+
+describe("deploy health (names only)", () => {
+  it("missing env names, Atlas host kind, never a value", () => {
+    const env = { META_APP_SECRET: "s3cret-value", ATLAS_WA_ASK_URL: "https://atlas.barncops.in/api/wa-ask/" };
+    const miss = missingEnv(env);
+    assert.ok(!miss.includes("META_APP_SECRET|WHATSAPP_APP_SECRET"));
+    assert.ok(miss.includes("ADMIN_INBOX_PASSWORD"));
+    assert.ok(!JSON.stringify(miss).includes("s3cret-value"));
+    assert.equal(atlasUrlKind(env.ATLAS_WA_ASK_URL), "production");
+    assert.equal(atlasUrlKind("https://barncops-atlas-git-main-x.vercel.app/api/wa-ask/"), "not_production");
+    assert.equal(atlasUrlKind(""), "unset");
+  });
+
+  it("db health lists applied migrations and missing WhatsApp tables", async () => {
+    const db = new PGlite();
+    const q = (sql: string, params: unknown[]) => db.query(sql, params) as Promise<{ rows: Array<Record<string, unknown>> }>;
+    assert.deepEqual((await dbHealth(q)).missing_tables, ["wa_seen_messages", "wa_inquiries", "wa_inquiry_messages", "wa_timing"]);
+    for (const m of MIGRATIONS) await db.exec(m);
+    await db.exec("create table _migrations (name text primary key); insert into _migrations values ('0004_wa_routing.sql'), ('0005_wa_inbox_timing.sql')");
+    const h = await dbHealth(q);
+    assert.deepEqual(h.missing_tables, []);
+    assert.deepEqual(h.migrations, ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql"]);
+  });
+});
 
 describe("timing summary", () => {
   it("p50/p95 of first reply and full answer from webhook receipt", () => {
