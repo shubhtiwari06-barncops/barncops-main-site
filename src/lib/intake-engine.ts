@@ -424,11 +424,13 @@ export async function atlasAnswer(
   phone: string,
   body: string,
   hi: boolean,
-): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null }> {
-  const asked = await atlasAskReply(phone, body);
-  if (asked && asked.text) return asked;
+): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null; atlasStatus: string }> {
+  const trail: string[] = [];
+  const asked = await atlasAskReply(phone, body, trail);
+  const atlasStatus = trail.join(">") || "none";
+  if (asked && asked.text) return { ...asked, atlasStatus };
   const miss = chooseAtlasReply(body, null, hi);
-  return { text: miss.text, handler: miss.handler, modelCalls: null, engineMs: null };
+  return { text: miss.text, handler: miss.handler, modelCalls: null, engineMs: null, atlasStatus };
 }
 
 function isAtlasPayCta(text: string): boolean {
@@ -455,9 +457,17 @@ function atlasAskUrls(): string[] {
   return out;
 }
 
-async function atlasAskReply(phone: string, text: string): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null } | null> {
+/** trail collects one status per URL tried ("200", "401", "redirect", "html", "not_json", "timeout", "error"). */
+async function atlasAskReply(
+  phone: string,
+  text: string,
+  trail: string[] = [],
+): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null } | null> {
   const secret = (process.env.ATLAS_WA_SECRET || "").trim();
-  if (!secret) return null;
+  if (!secret) {
+    trail.push("no_secret");
+    return null;
+  }
   const bypass = (process.env.ATLAS_WA_BYPASS || "").trim();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -476,11 +486,13 @@ async function atlasAskReply(phone: string, text: string): Promise<{ text: strin
       const loc = r.headers.get("location") || "";
       if (r.status >= 300 && r.status < 400 && /atlas\.barncops\.in/i.test(loc)) {
         console.log("[intake] atlas ask skipped CF redirect", r.status);
+        trail.push("redirect");
         continue;
       }
       const raw = await r.text();
       if (raw.startsWith("<!") || /just a moment/i.test(raw)) {
         console.log("[intake] atlas ask blocked", r.status);
+        trail.push(`html${r.status}`);
         continue;
       }
       let j: { text?: string; handler?: string; model_calls?: number; engine_ms?: number } = {};
@@ -488,8 +500,10 @@ async function atlasAskReply(phone: string, text: string): Promise<{ text: strin
         j = JSON.parse(raw) as typeof j;
       } catch {
         console.log("[intake] atlas ask not json", r.status);
+        trail.push(`not_json${r.status}`);
         continue;
       }
+      trail.push(String(r.status));
       if (j && j.text) {
         const textOut = String(j.text).slice(0, 4096);
         const quota = /free answers are used|muft jawaab|मुफ्त जवाब/i.test(textOut);
@@ -498,8 +512,11 @@ async function atlasAskReply(phone: string, text: string): Promise<{ text: strin
         return { text: textOut, handler, modelCalls: num(j.model_calls), engineMs: num(j.engine_ms) };
       }
       console.log("[intake] atlas ask no text", r.status);
+      /* A wrong intake secret fails the same way on every Atlas URL; trying the others only adds delay. */
+      if (r.status === 401) break;
     } catch (err) {
       console.log("[intake] atlas ask error", (err as Error)?.name || "fail");
+      trail.push((err as Error)?.name === "AbortError" ? "timeout" : "error");
     } finally {
       clearTimeout(t);
     }
@@ -729,7 +746,7 @@ async function getDb(): Promise<Db | null> {
    ═══════════════════════════════════════════════════════════════════ */
 
 /** Sends from the line that received the message; WHATSAPP_PHONE_NUMBER_ID when none is given. */
-export type SendResult = { ok: boolean; error?: string };
+export type SendResult = { ok: boolean; error?: string; status?: number; code?: number | null };
 
 async function graphWhatsApp(phoneNumberId: string | null | undefined, payload: Record<string, unknown>): Promise<SendResult> {
   const token = process.env.WHATSAPP_BUSINESS_TOKEN;
@@ -747,7 +764,14 @@ async function graphWhatsApp(phoneNumberId: string | null | undefined, payload: 
     if (!res.ok) {
       const detail = (await res.text()).slice(0, 500);
       console.error("[intake] whatsapp send failed", res.status, detail);
-      return { ok: false, error: `Meta ${res.status}: ${detail.slice(0, 200)}` };
+      let code: number | null = null;
+      try {
+        const c = (JSON.parse(detail) as { error?: { code?: unknown } }).error?.code;
+        code = typeof c === "number" ? c : null;
+      } catch {
+        code = null;
+      }
+      return { ok: false, status: res.status, code, error: `Meta ${res.status}: ${detail.slice(0, 200)}` };
     }
     console.log("[intake] whatsapp reply sent");
     return { ok: true };

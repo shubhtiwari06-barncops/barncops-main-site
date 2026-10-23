@@ -52,14 +52,27 @@ export const Route = createFileRoute("/api/wa-warm")({
             atlas = "error";
           }
         }
+        const ids = H.phoneIdCheck(process.env);
+        const secret = await H.atlasSecretCheck(process.env);
+        let webhook: unknown = "unavailable";
+        try {
+          webhook = await store.health(Date.now());
+        } catch {
+          webhook = "unavailable";
+        }
         return Response.json(
           {
             ok: true,
             local_ms: local,
             atlas_ms: atlas,
             atlas_url: H.atlasUrlKind(process.env.ATLAS_WA_ASK_URL),
+            atlas_secret_ok: secret.ok,
+            atlas_secret_status: secret.status,
+            phone_ids_consistent: ids.consistent,
+            phone_ids: ids.detail,
             env_missing: H.missingEnv(process.env),
             db,
+            webhook,
           },
           { headers: { "cache-control": "no-store" } },
         );

@@ -19,7 +19,7 @@ export const REQUIRED_ENV = [
   "INBOX_BASE_URL",
 ];
 
-export const WA_TABLES = ["wa_seen_messages", "wa_inquiries", "wa_inquiry_messages", "wa_timing"];
+export const WA_TABLES = ["wa_seen_messages", "wa_inquiries", "wa_inquiry_messages", "wa_timing", "wa_webhook_events"];
 export const ATLAS_PRODUCTION_HOSTS = ["atlas.barncops.in"];
 
 /** Names (or "a|b" alternatives) with no non-empty value. */
@@ -37,6 +37,57 @@ export function atlasUrlKind(raw: string | undefined): string {
     return ATLAS_PRODUCTION_HOSTS.includes(u.hostname.toLowerCase()) ? "production" : "not_production";
   } catch {
     return "invalid";
+  }
+}
+
+/**
+ * Booleans about the phone ids — never the ids. consistent = the routing ids are set, digits-only,
+ * and the Atlas id is the default sending line (WHATSAPP_PHONE_NUMBER_ID).
+ */
+export function phoneIdCheck(env: Record<string, string | undefined>) {
+  const raw = (n: string) => (env[n] || "").trim();
+  const digits = (n: string) => /^\d{6,20}$/.test(raw(n));
+  const atlas = raw("WA_ASK_ATLAS_PHONE_ID");
+  const business = raw("WA_BUSINESS_PHONE_ID");
+  const def = raw("WHATSAPP_PHONE_NUMBER_ID");
+  const detail = {
+    atlas_set: !!atlas,
+    business_set: !!business,
+    default_set: !!def,
+    atlas_digits_only: !atlas || digits("WA_ASK_ATLAS_PHONE_ID"),
+    business_digits_only: !business || digits("WA_BUSINESS_PHONE_ID"),
+    default_digits_only: !def || digits("WHATSAPP_PHONE_NUMBER_ID"),
+    atlas_equals_default: !!atlas && atlas === def,
+    business_equals_atlas: !!business && business === (atlas || def),
+  };
+  const consistent =
+    detail.default_set &&
+    detail.default_digits_only &&
+    detail.atlas_digits_only &&
+    detail.business_digits_only &&
+    (!atlas || detail.atlas_equals_default);
+  return { consistent, detail };
+}
+
+/** Signed ping: Atlas answers 400 (no question) when the intake secret matches, 401 when it does not. */
+export async function atlasSecretCheck(env: Record<string, string | undefined>, fetchFn: typeof fetch = fetch): Promise<{ ok: boolean | null; status: string }> {
+  const url = (env.ATLAS_WA_ASK_URL || "").trim();
+  const secret = (env.ATLAS_WA_SECRET || "").trim();
+  if (!/^https:\/\//i.test(url)) return { ok: null, status: "no_url" };
+  if (!secret) return { ok: false, status: "no_secret" };
+  try {
+    const r = await fetchFn(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-atlas-intake-secret": secret },
+      body: JSON.stringify({ phone: "", q: "" }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.status === 401) return { ok: false, status: "401" };
+    if (r.status === 400) return { ok: true, status: "400" };
+    return { ok: null, status: String(r.status) };
+  } catch (err) {
+    return { ok: null, status: (err as Error)?.name === "TimeoutError" ? "timeout" : "error" };
   }
 }
 

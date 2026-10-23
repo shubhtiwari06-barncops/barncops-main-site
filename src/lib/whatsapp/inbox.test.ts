@@ -6,7 +6,7 @@ import { BASE, handleInbox, type InboxDeps } from "./inbox.ts";
 import { memoryStore, routeConfig, routeEvent, sqlStore, type Email, type RouteDeps, type Store } from "./route.ts";
 
 const PASSWORD = "test-inbox-password-not-live";
-const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
+const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql", "0006_wa_webhook_events.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
 const HOUR = 3600 * 1000;
 const CFG = routeConfig({ WA_ASK_ATLAS_PHONE_ID: "111", WA_BUSINESS_PHONE_ID: "222", WA_BUSINESS_TAG: "#BCteam" });
 
