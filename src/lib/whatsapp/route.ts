@@ -183,12 +183,25 @@ export async function admit(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = rou
     counters.ignored_type += 1;
     return "ignored_type";
   }
-  if (ev.wamid && !(await deps.store.claim(ev.wamid, ev.phoneNumberId))) {
-    counters.duplicate += 1;
-    return "duplicate";
+  if (ev.wamid) {
+    let fresh: boolean;
+    try {
+      fresh = await deps.store.claim(ev.wamid, ev.phoneNumberId);
+    } catch (err) {
+      console.error("[wa-route] store unavailable — per-instance dedupe", (err as Error)?.message);
+      fresh = !fallbackSeen.has(ev.wamid);
+      fallbackSeen.add(ev.wamid);
+      if (fallbackSeen.size > 5000) fallbackSeen.clear();
+    }
+    if (!fresh) {
+      counters.duplicate += 1;
+      return "duplicate";
+    }
   }
   return null;
 }
+
+const fallbackSeen = new Set<string>();
 
 /** The work for one admitted message; records one timing row (no text, no number). */
 export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = routeConfig(), receivedAt?: number, background = false): Promise<Outcome> {
@@ -222,7 +235,13 @@ export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = ro
   const kind = ev.type === "text" || ev.type === "interactive" || ev.type === "button" ? "text" : ev.type;
 
   /* An open inquiry on this line keeps the bot silent: every message joins its thread. */
-  const open = route.kind === "business" || line === cfg.businessId ? await deps.store.openInquiry(ev.from, line, now - cfg.windowMs) : null;
+  const open =
+    route.kind === "business" || line === cfg.businessId
+      ? await deps.store.openInquiry(ev.from, line, now - cfg.windowMs).catch((err) => {
+          console.error("[wa-route] inquiry lookup failed", (err as Error)?.message);
+          return null;
+        })
+      : null;
   if (open) {
     await deps.store.addEntry(open, ev.wamid, "in", kind, ev.text, now);
     counters.inquiry_thread += 1;
