@@ -108,7 +108,7 @@ function listPage(rows: Inquiry[], now: number, csrf: string, timing: ReturnType
   const tr = rows
     .map(
       (i) => `<tr><td><a href="${BASE}/${i.id}">+${esc(i.phone)}</a>${i.profileName ? `<div class="muted">${esc(i.profileName)}</div>` : ""}</td>
-<td>${esc(i.source)}</td><td>${esc(fmt(i.lastAt))}</td><td>${left(windowLeftMs(i, now))}</td></tr>`,
+<td>${esc(i.source)}</td><td>${esc(fmt(i.lastAt))}</td><td>${left(windowLeftMs(i, now))}</td><td>${i.closedAt || windowLeftMs(i, now) <= 0 ? "bot on" : "bot silent"}</td></tr>`,
     )
     .join("");
   const t = timing;
@@ -116,7 +116,7 @@ function listPage(rows: Inquiry[], now: number, csrf: string, timing: ReturnType
   return page(
     "WhatsApp inbox",
     `<nav><strong>WhatsApp inbox</strong> · <form method="post" action="${BASE}" style="display:inline"><input type="hidden" name="action" value="logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button>Sign out</button></form></nav>
-<table><thead><tr><th>Number</th><th>Source</th><th>Last customer message</th><th>24 h window left</th></tr></thead><tbody>${tr || `<tr><td colspan="4" class="muted">No inquiries in the last ${LIST_DAYS} days.</td></tr>`}</tbody></table>
+<table><thead><tr><th>Number</th><th>Source</th><th>Last customer message</th><th>24 h window left</th><th>Bot</th></tr></thead><tbody>${tr || `<tr><td colspan="5" class="muted">No inquiries in the last ${LIST_DAYS} days.</td></tr>`}</tbody></table>
 <h2>Ask Atlas speed (last ${t.n} answers)</h2>
 <table><tr><th></th><th>p50</th><th>p95</th></tr>
 <tr><td>First reply (Checking… or answer) after webhook</td><td>${ms(t.first_reply.p50)}</td><td>${ms(t.first_reply.p95)}</td></tr>
@@ -143,11 +143,14 @@ ${
     ? `<form method="post" action="${BASE}/${inq.id}"><input type="hidden" name="action" value="template">${hidden}<p><button>Send template “${esc(template)}”</button></p></form>`
     : `<p class="err">Outside the 24 h window. Set WA_REPLY_TEMPLATE to an approved utility template to reopen the conversation.</p>`
 }`;
+  const silence = inq.closedAt
+    ? `<p class="muted">Closed ${esc(fmt(inq.closedAt))} — the bot answers this number again.</p>`
+    : `<form method="post" action="${BASE}/${inq.id}"><input type="hidden" name="action" value="close">${hidden}<p><button>Close &amp; resume bot</button> <span class="muted">The bot is silent for this number while this inquiry is open.</span></p></form>`;
   return page(
     `+${inq.phone} — WhatsApp inbox`,
     `<nav><a href="${BASE}">← All inquiries</a></nav>
 <h1>+${esc(inq.phone)}${inq.profileName ? ` · ${esc(inq.profileName)}` : ""}</h1>
-<p class="muted">Source ${esc(inq.source)} · line ${esc(inq.phoneNumberId)} · opened ${esc(fmt(inq.openedAt))} · window ${left(leftMs)}</p>
+<p class="muted">Source ${esc(inq.source)} · line ${esc(inq.phoneNumberId)} · opened ${esc(fmt(inq.openedAt))} · window ${left(leftMs)}</p>${silence}
 ${error ? `<p class="err">${esc(error)}</p>` : ""}${msgs}${reply}`,
     status,
   );
@@ -209,6 +212,16 @@ export async function handleInbox(request: Request, deps: InboxDeps, id: number 
       const r = await deps.sendTemplate(inq.phoneNumberId, inq.phone, name, lang);
       if (!r.ok) return threadPage(inq, await deps.store.thread(id), now, csrf, deps.env, `Template not sent: ${r.error || "WhatsApp refused it"}`, 502);
       await deps.store.addEntry(inq, null, "out", "template", `[template ${name} · ${lang}]`, now);
+      return redirect(`${BASE}/${id}`);
+    }
+    if (action === "close") {
+      await deps.store.closeInquiry(id, now);
+      await deps.store.addEntry(inq, null, "out", "system", "[closed — bot resumed]", now);
+      try {
+        await deps.store.logEvent({ verdict: "inquiry_closed", line: "inbox", detail: null }, now);
+      } catch {
+        /* the close itself already happened */
+      }
       return redirect(`${BASE}/${id}`);
     }
     return threadPage(inq, await deps.store.thread(id), now, csrf, deps.env, "Unknown action.", 400);

@@ -8,6 +8,7 @@
  *   WA_INQUIRY_WINDOW_HOURS inactivity window of one inquiry (default 24)
  *   WA_ACK_AFTER_MS         "Checking…" goes out only if the Atlas answer is not back by then (default 1200)
  *   INBOX_BASE_URL          base of the /admin/wa-inbox link in inquiry emails
+ *   WA_TEST_NUMBERS         comma list of numbers that are never silenced (owner/test phones)
  *
  * Shared mode (one number): every message goes to Atlas, except a message that carries the tag
  * or a tap on the "Talk to the team" button — that opens one inquiry for the number, emails the
@@ -16,6 +17,7 @@
  * Any other phone_number_id (an old number still subscribed) is ignored: 200, no row, no email.
  */
 
+import { createHash } from "node:crypto";
 import { isAtlasQuestion, looksDataQuestion } from "../intake-engine.ts";
 
 export const TEAM_BUTTON_ID = "talk_team";
@@ -36,23 +38,100 @@ export type WaEvent = {
 export type RouteConfig = {
   atlasId: string | null;
   businessId: string | null;
+  /** WHATSAPP_PHONE_NUMBER_ID — the line the site sends from by default. */
+  defaultId: string | null;
+  /** WA_TEST_NUMBERS hashed — these numbers are never silenced by an open inquiry. */
+  testHashes: Set<string>;
   tag: string | null;
   windowMs: number;
   ackAfterMs: number;
   inboxBase: string;
 };
 
+/** Meta phone_number_ids are digits; quotes, spaces or a pasted label around one never change it. */
+export const phoneId = (v: string | undefined) => (v || "").replace(/\D/g, "") || null;
+
 export function routeConfig(env: Record<string, string | undefined> = process.env): RouteConfig {
-  const atlasId = (env.WA_ASK_ATLAS_PHONE_ID || env.WHATSAPP_PHONE_NUMBER_ID || "").trim() || null;
-  const businessId = (env.WA_BUSINESS_PHONE_ID || "").trim() || atlasId;
+  const defaultId = phoneId(env.WHATSAPP_PHONE_NUMBER_ID);
+  const atlasId = phoneId(env.WA_ASK_ATLAS_PHONE_ID) || defaultId;
+  const businessId = phoneId(env.WA_BUSINESS_PHONE_ID) || atlasId;
   const tag = (env.WA_BUSINESS_TAG || "").trim() || null;
   const hours = Number(env.WA_INQUIRY_WINDOW_HOURS || 24);
   const ack = Number(env.WA_ACK_AFTER_MS || 1200);
   const base = (env.INBOX_BASE_URL || "https://www.barncops.in").trim().replace(/\/+$/, "");
-  return { atlasId, businessId, tag, windowMs: (hours > 0 ? hours : 24) * 3600 * 1000, ackAfterMs: ack >= 0 ? ack : 1200, inboxBase: base };
+  return { atlasId, businessId, defaultId, testHashes: testNumberHashes(env), tag, windowMs: (hours > 0 ? hours : 24) * 3600 * 1000, ackAfterMs: ack >= 0 ? ack : 1200, inboxBase: base };
 }
 
-export type Inquiry = { id: number; phone: string; phoneNumberId: string; source: string; lastAt: number; openedAt: number; profileName: string | null };
+/** Which configured id an incoming phone_number_id equals (names only — for logs and health). */
+export function lineMatch(id: string | null, cfg: RouteConfig): string {
+  if (!id) return "none";
+  const m = [id === cfg.atlasId && "atlas", id === cfg.businessId && "business", id === cfg.defaultId && "default"].filter(Boolean);
+  return m.length ? m.join("+") : "none";
+}
+
+/**
+ * The default sending line is never silenced by a routing id that does not match it: a message on
+ * WHATSAPP_PHONE_NUMBER_ID that equals neither routing id is handled as one shared number.
+ */
+export function effectiveConfig(ev: { phoneNumberId: string | null }, cfg: RouteConfig): RouteConfig {
+  const id = ev.phoneNumberId;
+  if (!id || !cfg.defaultId || id !== cfg.defaultId || id === cfg.atlasId || id === cfg.businessId) return cfg;
+  console.error("[wa-route] CONFIG MISMATCH — message on WHATSAPP_PHONE_NUMBER_ID, which equals neither WA_ASK_ATLAS_PHONE_ID nor WA_BUSINESS_PHONE_ID; answered as a shared number");
+  return { ...cfg, atlasId: id, businessId: id };
+}
+
+export type WebhookEvent = { verdict: string; line: string; detail: string | null; test?: boolean };
+export type NumberStatus = {
+  silenced: boolean;
+  inquiry_id: number | null;
+  source: string | null;
+  silence_left_min: number | null;
+  messages_queued_1h: number;
+  inquiries_1h: number;
+};
+
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+/** Last 10 digits: 9522236699, 919522236699 and +91 95222 36699 are one number. */
+export const last10 = (phone: string) => String(phone || "").replace(/\D/g, "").slice(-10);
+
+/** WA_TEST_NUMBERS (comma list) as hashes of their last 10 digits; the list itself is never kept. */
+export function testNumberHashes(env: Record<string, string | undefined>): Set<string> {
+  return new Set(
+    String(env.WA_TEST_NUMBERS || "")
+      .split(",")
+      .map(last10)
+      .filter((d) => d.length === 10)
+      .map(sha),
+  );
+}
+
+export const isTestNumber = (phone: string, cfg: RouteConfig) => cfg.testHashes.size > 0 && cfg.testHashes.has(sha(last10(phone)));
+export type WaHealth = {
+  last_webhook_at: string | null;
+  last_signature_fail_at: string | null;
+  last_ignored_number_at: string | null;
+  last_config_mismatch_at: string | null;
+  last_seen_message_at: string | null;
+  last_handled_at: string | null;
+  last_30min: Record<string, number>;
+  timing_30min: Record<string, number>;
+  /** Routing verdicts of WA_TEST_NUMBERS messages in the last hour. */
+  test_numbers_1h: Record<string, number>;
+  last_send_fail: string | null;
+  last_atlas_status: string | null;
+};
+
+export type Inquiry = {
+  id: number;
+  phone: string;
+  phoneNumberId: string;
+  source: string;
+  lastAt: number;
+  openedAt: number;
+  profileName: string | null;
+  /** Set by "Close & resume bot"; a closed inquiry never silences the bot. */
+  closedAt?: number | null;
+};
 export type Entry = { direction: "in" | "out"; kind: string; body: string | null; at: number };
 export type Timing = {
   wamid: string | null;
@@ -72,7 +151,12 @@ export type Timing = {
 export type Store = {
   /** False when this Meta message id was handled before. */
   claim(wamid: string, phoneNumberId: string | null): Promise<boolean>;
+  /** The newest inquiry for this number + line that is not closed and had a customer message since activeSince. */
   openInquiry(phone: string, phoneNumberId: string, activeSince: number): Promise<Inquiry | null>;
+  /** Ends the bot's silence for this inquiry now. */
+  closeInquiry(id: number, now: number): Promise<void>;
+  /** Silence state for one number (last 10 digits) — for health; returns no number or text. */
+  numberStatus(last10: string, windowMs: number, now: number): Promise<NumberStatus>;
   createInquiry(phone: string, phoneNumberId: string, source: string, now: number, profileName?: string | null): Promise<Inquiry>;
   addEntry(inquiry: Inquiry, wamid: string | null, direction: "in" | "out", kind: string, body: string | null, now: number): Promise<void>;
   markEmailed(inquiry: Inquiry, now: number): Promise<void>;
@@ -82,10 +166,23 @@ export type Store = {
   thread(id: number): Promise<Entry[]>;
   addTiming(t: Timing): Promise<void>;
   timings(limit: number): Promise<Timing[]>;
+  /** Webhook verdicts — names and codes only, never text, numbers or secrets. */
+  logEvent(e: WebhookEvent, now: number): Promise<void>;
+  health(now: number): Promise<WaHealth>;
 };
 
 export type Email = { subject: string; displayName: string; rows: Array<[string, string]>; note?: string };
-export type AtlasReply = { text: string; handler: string; modelCalls: number | null; engineMs: number | null };
+/** atlasStatus: what the Atlas call returned ("200", "401", "html", "timeout", "no_secret", …). */
+export type AtlasReply = { text: string; handler: string; modelCalls: number | null; engineMs: number | null; atlasStatus?: string };
+/** What a send returned; anything else (void) counts as sent. */
+type Sent = { ok?: boolean; error?: string; status?: number; code?: number | null } | void | unknown;
+
+/** "graph <http> <error code>" for a refused send, null when it went out. */
+export function sendFailure(r: Sent): string | null {
+  const s = r as { ok?: boolean; status?: number; code?: number | null; error?: string } | undefined;
+  if (!s || s.ok !== false) return null;
+  return s.status ? `graph ${s.status}${s.code != null ? ` code ${s.code}` : ""}` : (s.error || "send failed").slice(0, 40);
+}
 
 export type RouteDeps = {
   store: Store;
@@ -173,14 +270,19 @@ export function inboxUrl(cfg: RouteConfig, id: number): string {
 }
 
 /** Before the 200 to Meta: the route, the message type and the Meta message id (claimed once). */
-export async function admit(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = routeConfig()): Promise<Outcome | null> {
+export async function admit(ev: WaEvent, deps: RouteDeps, base: RouteConfig = routeConfig()): Promise<Outcome | null> {
+  const cfg = effectiveConfig(ev, base);
+  const line = lineMatch(ev.phoneNumberId, base);
+  if (cfg !== base) await note(deps, "config_mismatch", line, null);
   if (decide(ev, cfg).kind === "ignored_number") {
     counters.ignored_number += 1;
-    console.log("[wa-route] ignored_number", { phoneNumberId: ev.phoneNumberId });
+    console.log("[wa-route] ignored_number", { phoneNumberId: ev.phoneNumberId, line });
+    await note(deps, "ignored_number", line, null);
     return "ignored_number";
   }
   if (!CONVERSATION_TYPES.has(ev.type)) {
     counters.ignored_type += 1;
+    await note(deps, "ignored_type", line, ev.type.slice(0, 20));
     return "ignored_type";
   }
   if (ev.wamid) {
@@ -195,16 +297,43 @@ export async function admit(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = rou
     }
     if (!fresh) {
       counters.duplicate += 1;
+      await note(deps, "duplicate", line, null);
       return "duplicate";
     }
   }
+  await note(deps, "admitted", line, null);
   return null;
 }
 
 const fallbackSeen = new Set<string>();
 
+/** Records one webhook verdict; never fails the request. */
+export async function note(deps: Pick<RouteDeps, "store" | "now">, verdict: string, line: string, detail: string | null, test = false): Promise<void> {
+  try {
+    await deps.store.logEvent({ verdict, line, detail, test }, deps.now());
+  } catch (err) {
+    console.error("[wa-route] event not stored", verdict, (err as Error)?.message);
+  }
+}
+
 /** The work for one admitted message; records one timing row (no text, no number). */
-export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = routeConfig(), receivedAt?: number, background = false): Promise<Outcome> {
+export async function handle(ev: WaEvent, rawDeps: RouteDeps, base: RouteConfig = routeConfig(), receivedAt?: number, background = false): Promise<Outcome> {
+  const cfg = effectiveConfig(ev, base);
+  const lineKind = lineMatch(ev.phoneNumberId, base);
+  /* Every refused send is recorded as "graph <http> code <n>". */
+  const checked = (r: unknown) => {
+    const f = sendFailure(r);
+    if (f) {
+      console.error("[wa-route] send failed", f);
+      return note(rawDeps, "send_fail", lineKind, f).then(() => r);
+    }
+    return r;
+  };
+  const deps: RouteDeps = {
+    ...rawDeps,
+    sendText: (l, to, body, preview) => rawDeps.sendText(l, to, body, preview).then(checked),
+    sendButton: (l, to, body, id, title) => rawDeps.sendButton(l, to, body, id, title).then(checked),
+  };
   const route = decide(ev, cfg);
   const t: Timing = {
     wamid: ev.wamid,
@@ -234,7 +363,13 @@ export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = ro
   const hi = isHindi(ev.text || "");
   const kind = ev.type === "text" || ev.type === "interactive" || ev.type === "button" ? "text" : ev.type;
 
-  /* An open inquiry on this line keeps the bot silent: every message joins its thread. */
+  const test = isTestNumber(ev.from, cfg);
+  const mark = (verdict: string) => note(deps, verdict, lineKind, null, test);
+
+  /*
+   * An open inquiry on this line keeps the bot silent: every message joins its thread for the team.
+   * A WA_TEST_NUMBERS number is queued the same way but still gets the bot's answer.
+   */
   const open =
     route.kind === "business" || line === cfg.businessId
       ? await deps.store.openInquiry(ev.from, line, now - cfg.windowMs).catch((err) => {
@@ -245,10 +380,15 @@ export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = ro
   if (open) {
     await deps.store.addEntry(open, ev.wamid, "in", kind, ev.text, now);
     counters.inquiry_thread += 1;
-    return done("inquiry_thread");
+    if (!test || route.kind === "business") {
+      await mark("business_silenced");
+      return done("inquiry_thread");
+    }
+    await mark("test_not_silenced");
   }
 
-  if (route.kind === "business") {
+  if (route.kind === "business" && !open) {
+    await mark("business");
     const inq = await deps.store.createInquiry(ev.from, line, route.source, now, ev.profileName);
     await deps.store.addEntry(inq, ev.wamid, "in", kind, ev.text, now);
     const ack = hi ? COPY.ack.hi : COPY.ack.en;
@@ -277,6 +417,7 @@ export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = ro
   }
 
   counters.atlas += 1;
+  await mark("atlas");
   if (ev.type !== "text" || !ev.text) {
     await deps.sendText(line, ev.from, hi ? COPY.textOnly.hi : COPY.textOnly.en);
     t.sentAt = deps.now();
@@ -301,6 +442,7 @@ export async function handle(ev: WaEvent, deps: RouteDeps, cfg: RouteConfig = ro
     clearTimeout(timer);
   }
   t.engineEnd = deps.now();
+  if (reply.atlasStatus) await note(deps, "atlas", lineKind, reply.atlasStatus);
   t.handler = reply.handler;
   t.modelCalls = reply.modelCalls;
   t.engineMs = reply.engineMs;
@@ -361,8 +503,9 @@ const toInquiry = (r: Record<string, unknown>): Inquiry => ({
   lastAt: ms(r.last_at) as number,
   openedAt: ms(r.opened_at) as number,
   profileName: (r.profile_name as string) ?? null,
+  closedAt: ms(r.closed_at),
 });
-const INQ_COLS = "id, phone, phone_number_id, source, last_at, opened_at, profile_name";
+const INQ_COLS = "id, phone, phone_number_id, source, last_at, opened_at, profile_name, closed_at";
 
 /** Postgres (pg Pool or PGlite — anything with query(sql, params) → { rows }). */
 export function sqlStore(query: Query): Store {
@@ -373,10 +516,34 @@ export function sqlStore(query: Query): Store {
     },
     async openInquiry(phone, phoneNumberId, activeSince) {
       const r = await query(
-        `select ${INQ_COLS} from wa_inquiries where phone = $1 and phone_number_id = $2 and last_at > $3 order by last_at desc limit 1`,
+        `select ${INQ_COLS} from wa_inquiries where phone = $1 and phone_number_id = $2 and last_at > $3 and closed_at is null order by last_at desc limit 1`,
         [phone, phoneNumberId, iso(activeSince)],
       );
       return r.rows[0] ? toInquiry(r.rows[0]) : null;
+    },
+    async closeInquiry(id, now) {
+      await query(`update wa_inquiries set closed_at = $2 where id = $1 and closed_at is null`, [id, iso(now)]);
+    },
+    async numberStatus(d10, windowMs, now) {
+      const hour = iso(now - 3600 * 1000);
+      const open = (
+        await query(
+          `select id, source, last_at from wa_inquiries where right(phone, 10) = $1 and closed_at is null and last_at > $2 order by last_at desc limit 1`,
+          [d10, iso(now - windowMs)],
+        )
+      ).rows[0];
+      const queued = open
+        ? Number((await query(`select count(*)::int as n from wa_inquiry_messages where inquiry_id = $1 and direction = 'in' and created_at > $2`, [open.id, hour])).rows[0].n)
+        : 0;
+      const made = Number((await query(`select count(*)::int as n from wa_inquiries where right(phone, 10) = $1 and opened_at > $2`, [d10, hour])).rows[0].n);
+      return {
+        silenced: !!open,
+        inquiry_id: open ? Number(open.id) : null,
+        source: open ? String(open.source) : null,
+        silence_left_min: open ? Math.max(0, Math.round(((ms(open.last_at) as number) + windowMs - now) / 60000)) : null,
+        messages_queued_1h: queued,
+        inquiries_1h: made,
+      };
     },
     async createInquiry(phone, phoneNumberId, source, now, profileName) {
       const r = await query(
@@ -417,6 +584,39 @@ export function sqlStore(query: Query): Store {
         [t.wamid, t.phoneNumberId, t.outcome, iso(t.receivedAt), iso(t.ackedAt), iso(t.engineStart), iso(t.engineEnd), iso(t.sentAt), t.modelCalls, t.engineMs, t.handler, t.background],
       );
     },
+    async logEvent(e, now) {
+      await query(`insert into wa_webhook_events (at, verdict, line, detail, test) values ($1, $2, $3, $4, $5)`, [iso(now), e.verdict, e.line, e.detail, !!e.test]);
+    },
+    async health(now) {
+      const since = iso(now - 30 * 60 * 1000);
+      const last = async (sql: string, params: unknown[] = []) => {
+        const v = (await query(sql, params)).rows[0]?.t;
+        return v == null ? null : new Date(v as string).toISOString();
+      };
+      const lastOf = (verdict: string) => last(`select max(at) as t from wa_webhook_events where verdict = $1`, [verdict]);
+      const counts = async (sql: string) =>
+        Object.fromEntries((await query(sql, [since])).rows.map((r) => [String(r.k), Number(r.n)]));
+      const lastDetail = async (verdict: string) =>
+        ((await query(`select detail from wa_webhook_events where verdict = $1 order by at desc limit 1`, [verdict])).rows[0]?.detail as string) ?? null;
+      return {
+        last_webhook_at: await last(`select max(at) as t from wa_webhook_events`),
+        last_signature_fail_at: await lastOf("signature_fail"),
+        last_ignored_number_at: await lastOf("ignored_number"),
+        last_config_mismatch_at: await lastOf("config_mismatch"),
+        last_seen_message_at: await last(`select max(received_at) as t from wa_seen_messages`),
+        last_handled_at: await last(`select max(received_at) as t from wa_timing`),
+        last_30min: await counts(`select verdict || ':' || line as k, count(*)::int as n from wa_webhook_events where at > $1 group by 1`),
+        timing_30min: await counts(`select outcome as k, count(*)::int as n from wa_timing where received_at > $1 group by 1`),
+        test_numbers_1h: Object.fromEntries(
+          (await query(`select verdict as k, count(*)::int as n from wa_webhook_events where test and at > $1 group by 1`, [iso(now - 3600 * 1000)])).rows.map((r) => [
+            String(r.k),
+            Number(r.n),
+          ]),
+        ),
+        last_send_fail: await lastDetail("send_fail"),
+        last_atlas_status: await lastDetail("atlas"),
+      };
+    },
     async timings(limit) {
       const r = await query(`select * from wa_timing order by received_at desc limit $1`, [limit]);
       return r.rows.map((x) => ({
@@ -437,7 +637,13 @@ export function sqlStore(query: Query): Store {
   };
 }
 
-export type MemoryStore = Store & { seen: Set<string>; inquiries: Inquiry[]; entries: Array<Entry & { inquiryId: number }>; timingRows: Timing[] };
+export type MemoryStore = Store & {
+  seen: Set<string>;
+  inquiries: Inquiry[];
+  entries: Array<Entry & { inquiryId: number }>;
+  timingRows: Timing[];
+  events: Array<WebhookEvent & { at: number }>;
+};
 
 /** Per-instance fallback when DATABASE_URL is unset (preview / local). */
 export function memoryStore(): MemoryStore {
@@ -445,22 +651,41 @@ export function memoryStore(): MemoryStore {
   const inquiries: Inquiry[] = [];
   const entries: Array<Entry & { inquiryId: number }> = [];
   const timingRows: Timing[] = [];
+  const events: Array<WebhookEvent & { at: number }> = [];
   return {
     seen,
     inquiries,
     entries,
     timingRows,
+    events,
     async claim(wamid) {
       if (seen.has(wamid)) return false;
       seen.add(wamid);
       return true;
     },
     async openInquiry(phone, phoneNumberId, activeSince) {
-      const hits = inquiries.filter((i) => i.phone === phone && i.phoneNumberId === phoneNumberId && i.lastAt > activeSince);
+      const hits = inquiries.filter((i) => i.phone === phone && i.phoneNumberId === phoneNumberId && i.lastAt > activeSince && i.closedAt == null);
       return hits.length ? hits[hits.length - 1] : null;
     },
+    async closeInquiry(id, now) {
+      const i = inquiries.find((x) => x.id === id);
+      if (i && i.closedAt == null) i.closedAt = now;
+    },
+    async numberStatus(d10, windowMs, now) {
+      const mine = inquiries.filter((i) => last10(i.phone) === d10);
+      const open = mine.filter((i) => i.closedAt == null && i.lastAt > now - windowMs).at(-1);
+      const hour = now - 3600 * 1000;
+      return {
+        silenced: !!open,
+        inquiry_id: open ? open.id : null,
+        source: open ? open.source : null,
+        silence_left_min: open ? Math.max(0, Math.round((open.lastAt + windowMs - now) / 60000)) : null,
+        messages_queued_1h: open ? entries.filter((e) => e.inquiryId === open.id && e.direction === "in" && e.at > hour).length : 0,
+        inquiries_1h: mine.filter((i) => i.openedAt > hour).length,
+      };
+    },
     async createInquiry(phone, phoneNumberId, source, now, profileName) {
-      const inq = { id: inquiries.length + 1, phone, phoneNumberId, source, lastAt: now, openedAt: now, profileName: profileName ?? null };
+      const inq: Inquiry = { id: inquiries.length + 1, phone, phoneNumberId, source, lastAt: now, openedAt: now, profileName: profileName ?? null, closedAt: null };
       inquiries.push(inq);
       return inq;
     },
@@ -484,6 +709,28 @@ export function memoryStore(): MemoryStore {
     },
     async timings(limit) {
       return timingRows.slice(-limit).reverse();
+    },
+    async logEvent(e, now) {
+      events.push({ ...e, at: now });
+    },
+    async health(now) {
+      const since = now - 30 * 60 * 1000;
+      const isoOf = (n: number | undefined) => (n == null ? null : new Date(n).toISOString());
+      const lastOf = (v?: string) => isoOf(events.filter((e) => !v || e.verdict === v).at(-1)?.at);
+      const tally = (keys: string[]) => keys.reduce<Record<string, number>>((a, k) => ((a[k] = (a[k] || 0) + 1), a), {});
+      return {
+        last_webhook_at: lastOf(),
+        last_signature_fail_at: lastOf("signature_fail"),
+        last_ignored_number_at: lastOf("ignored_number"),
+        last_config_mismatch_at: lastOf("config_mismatch"),
+        last_seen_message_at: null,
+        last_handled_at: isoOf(timingRows.at(-1)?.receivedAt),
+        last_30min: tally(events.filter((e) => e.at > since).map((e) => `${e.verdict}:${e.line}`)),
+        timing_30min: tally(timingRows.filter((t) => t.receivedAt > since).map((t) => t.outcome)),
+        test_numbers_1h: tally(events.filter((e) => e.test && e.at > now - 3600 * 1000).map((e) => e.verdict)),
+        last_send_fail: events.filter((e) => e.verdict === "send_fail").at(-1)?.detail ?? null,
+        last_atlas_status: events.filter((e) => e.verdict === "atlas").at(-1)?.detail ?? null,
+      };
     },
   };
 }

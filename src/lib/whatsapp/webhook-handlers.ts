@@ -1,5 +1,5 @@
 import { metaAppSecret, verifyHubToken, verifyMetaSignature } from "./meta-sig.ts";
-import { admit, handle, routeConfig, type RouteConfig, type RouteDeps, type WaEvent } from "./route.ts";
+import { admit, handle, note, routeConfig, type RouteConfig, type RouteDeps, type WaEvent } from "./route.ts";
 
 type MetaMessage = {
   from: string;
@@ -79,6 +79,14 @@ function vercelWaitUntil(): WaitUntil | undefined {
   return typeof wu === "function" ? wu : undefined;
 }
 
+/** Status callbacks and refused POSTs are frequent: record each kind at most once a minute per instance. */
+const lastNoted = new Map<string, number>();
+function throttle(kind: string, now = Date.now()): boolean {
+  if (now - (lastNoted.get(kind) || 0) < 60_000) return false;
+  lastNoted.set(kind, now);
+  return true;
+}
+
 export type WebhookOpts = { deps?: RouteDeps; cfg?: RouteConfig; waitUntil?: WaitUntil | null };
 
 /**
@@ -90,6 +98,9 @@ export async function handleWhatsAppWebhookPost(request: Request, opts: WebhookO
   const raw = Buffer.from(await request.arrayBuffer());
   const header = request.headers.get("x-hub-signature-256");
   if (!verifyMetaSignature(raw, header, metaAppSecret())) {
+    const verdict = header ? "signature_mismatch" : "signature_missing";
+    console.error("[whatsapp] webhook refused", verdict);
+    if (throttle("sig")) await note(opts.deps || (await liveDeps()), "signature_fail", "none", verdict);
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -102,7 +113,10 @@ export async function handleWhatsAppWebhookPost(request: Request, opts: WebhookO
 
   try {
     const events = eventsOf(payload);
-    if (!events.length) return new Response("ok", { status: 200 });
+    if (!events.length) {
+      if (throttle("signed")) await note(opts.deps || (await liveDeps()), "signed_no_messages", "none", null);
+      return new Response("ok", { status: 200 });
+    }
     const deps = opts.deps || (await liveDeps());
     const cfg = opts.cfg || routeConfig();
     const admitted: WaEvent[] = [];
@@ -115,6 +129,7 @@ export async function handleWhatsAppWebhookPost(request: Request, opts: WebhookO
             await handle(ev, deps, cfg, receivedAt, bg);
           } catch (err) {
             console.error("[whatsapp] handler error", (err as Error)?.message);
+            await note(deps, "handler_error", "none", String((err as Error)?.name || "Error").slice(0, 40));
           }
         }
       };

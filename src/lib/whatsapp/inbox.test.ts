@@ -6,7 +6,7 @@ import { BASE, handleInbox, type InboxDeps } from "./inbox.ts";
 import { memoryStore, routeConfig, routeEvent, sqlStore, type Email, type RouteDeps, type Store } from "./route.ts";
 
 const PASSWORD = "test-inbox-password-not-live";
-const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
+const MIGRATIONS = ["0004_wa_routing.sql", "0005_wa_inbox_timing.sql", "0006_wa_webhook_events.sql", "0007_wa_inquiry_close.sql"].map((f) => readFileSync(new URL(`../../../migrations/${f}`, import.meta.url), "utf8"));
 const HOUR = 3600 * 1000;
 const CFG = routeConfig({ WA_ASK_ATLAS_PHONE_ID: "111", WA_BUSINESS_PHONE_ID: "222", WA_BUSINESS_TAG: "#BCteam" });
 
@@ -215,6 +215,20 @@ for (const kind of ["memory", "sql"] as const) {
       assert.equal(res.status, 502);
       assert.match(await res.text(), /Not sent/);
       assert.ok((await r.store.thread(1)).every((e) => e.body !== "will fail"));
+    });
+
+    it("Close & resume bot: ends the silence now, logged in the thread; the next message is the bot's again", async () => {
+      const r = await rig(kind);
+      await r.inbound("919800000110", "Hello");
+      await r.login();
+      assert.match(await (await r.call(1)).text(), /Close &amp; resume bot/);
+      assert.equal((await r.call(1, "POST", { action: "close", csrf: await r.csrfOf(1) })).status, 303);
+      const thread = await r.store.thread(1);
+      assert.equal(thread.at(-1)?.body, "[closed — bot resumed]");
+      assert.match(await (await r.call(1)).text(), /the bot answers this number again/);
+      assert.equal(await r.store.openInquiry("919800000110", "222", 0), null);
+      assert.match(await (await r.call(null)).text(), /bot on/);
+      assert.equal((await r.call(1, "POST", { action: "close" })).status, 403, "close needs the CSRF token");
     });
 
     it("unknown inquiry → 404", async () => {
