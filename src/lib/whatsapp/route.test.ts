@@ -5,7 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { handleWhatsAppWebhookPost } from "./webhook-handlers.ts";
 import { signMetaBody } from "./meta-sig.ts";
 import { atlasSecretCheck, atlasUrlKind, dbHealth, missingEnv, phoneIdCheck, testNumberStatus } from "./health.ts";
-import { COPY, TEAM_BUTTON_ID, counters, memoryStore, routeConfig, sqlStore, tagSource, timingSummary, type AtlasReply, type RouteConfig, type RouteDeps, type Store } from "./route.ts";
+import { COPY, TEAM_BUTTON_ID, counters, handle, memoryStore, routeConfig, sqlStore, tagSource, timingSummary, type AtlasReply, type RouteConfig, type RouteDeps, type Store } from "./route.ts";
 
 const SECRET = "test-meta-app-secret-do-not-use-live";
 const TAG = "#BCteam";
@@ -565,6 +565,84 @@ describe("timing summary", () => {
     assert.equal(s.first_reply.p50, 1050);
     assert.equal(s.acked, 2);
     assert.equal(s.model_calls_avg, 0.5);
+  });
+});
+
+describe("ack pairing", () => {
+  const ev = {
+    phoneNumberId: "111", from: "919800000099", wamid: "wamid.ack1", type: "text",
+    text: "bihar 2020 result", buttonId: null, profileName: null, timestamp: "1",
+  };
+  const cfg = () => routeConfig({ ...SHARED, WA_ACK_AFTER_MS: "20" });
+
+  it("a thrown atlas still sends one terminal message after the ack", async () => {
+    const sent: string[] = [];
+    const store = memoryStore();
+    await handle(ev, {
+      store,
+      now: () => Date.now(),
+      atlas: async () => {
+        await new Promise((r) => setTimeout(r, 80));
+        throw new Error("leader lookup failed");
+      },
+      sendText: async (_l, _to, body) => { sent.push(body); },
+      sendButton: async () => {},
+      email: async () => {},
+    }, cfg());
+    assert.deepEqual(sent, [COPY.checking.en, COPY.answerFail.en]);
+  });
+
+  it("a fast answer sends no ack", async () => {
+    const sent: string[] = [];
+    await handle(ev, {
+      store: memoryStore(),
+      now: () => Date.now(),
+      atlas: async () => ({ text: "Atlas answer.", handler: "engine", modelCalls: 0, engineMs: 1 }),
+      sendText: async (_l, _to, body) => { sent.push(body); },
+      sendButton: async () => {},
+      email: async () => {},
+    }, routeConfig({ ...SHARED, WA_ACK_AFTER_MS: "500" }));
+    assert.deepEqual(sent, ["Atlas answer."]);
+  });
+
+  it("when the terminal send fails after an ack, one retry line follows", async () => {
+    const sent: string[] = [];
+    let n = 0;
+    await handle(ev, {
+      store: memoryStore(),
+      now: () => Date.now(),
+      atlas: async () => {
+        await new Promise((r) => setTimeout(r, 80));
+        return { text: "Atlas answer.", handler: "engine", modelCalls: 0, engineMs: 1 };
+      },
+      sendText: async (_l, _to, body) => {
+        sent.push(body);
+        n += 1;
+        if (n === 2) throw new Error("graph down");
+      },
+      sendButton: async () => {},
+      email: async () => {},
+    }, cfg());
+    assert.deepEqual(sent, [COPY.checking.en, "Atlas answer.", COPY.answerFail.en]);
+  });
+
+  it("when no terminal message can be sent after an ack, the operator is told", async () => {
+    const emails: Array<Array<[string, string]>> = [];
+    await handle({ ...ev, wamid: "wamid.dangle" }, {
+      store: memoryStore(),
+      now: () => Date.now(),
+      atlas: async () => {
+        await new Promise((r) => setTimeout(r, 80));
+        return { text: "Atlas answer.", handler: "engine", modelCalls: 0, engineMs: 1 };
+      },
+      sendText: async (_l, _to, body) => {
+        if (body !== COPY.checking.en) throw new Error("graph down");
+      },
+      sendButton: async () => {},
+      email: async (e) => { emails.push(e.rows); },
+    }, cfg());
+    assert.equal(emails.length, 1);
+    assert.deepEqual(emails[0], [["Job", "wamid.dangle"], ["State", "terminal_failed"]]);
   });
 });
 

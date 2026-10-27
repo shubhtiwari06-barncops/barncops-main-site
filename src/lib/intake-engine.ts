@@ -395,13 +395,22 @@ async function replyAtlas(
   channel: Channel = "whatsapp",
   phoneNumberId?: string | null,
 ): Promise<{ text: string; handler: string }> {
+  let settled = false;
   let checkingSent = false;
   const timer = setTimeout(() => {
+    if (settled) return;
     checkingSent = true;
-    void sendViaChannel(channel, phone, checkingLine(hi, body), false, phoneNumberId).catch(() => {});
+    void sendViaChannel(channel, phone, checkingLine(hi, body), false, phoneNumberId).catch(() => {
+      checkingSent = false;
+    });
   }, ackAfterMs());
+  const fail = hi
+    ? "जवाब अभी नहीं जा सका। एक मिनट बाद वही संदेश फिर भेजें।"
+    : "The answer could not be sent just now. Send the same message again in a minute.";
   try {
     const asked = await atlasAskReply(phone, body);
+    settled = true;
+    clearTimeout(timer);
     if (asked && asked.text) {
       return {
         text: asked.text,
@@ -410,11 +419,14 @@ async function replyAtlas(
     }
     const miss = chooseAtlasReply(body, null, hi);
     return {
-      text: miss.text,
+      text: miss.text || fail,
       handler: checkingSent ? `${miss.handler}+checking` : miss.handler,
     };
-  } finally {
+  } catch {
+    settled = true;
     clearTimeout(timer);
+    if (checkingSent) console.error(JSON.stringify({ event: "dangling_ack", state: "atlas_threw" }));
+    return { text: fail, handler: checkingSent ? "atlas_error+checking" : "atlas_error" };
   }
 }
 

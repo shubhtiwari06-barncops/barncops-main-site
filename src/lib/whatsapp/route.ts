@@ -236,12 +236,37 @@ export const COPY = {
     hi: "Ask Atlas लिखे हुए सवाल पढ़ता है — सीट, राज्य और साल, या नेता का नाम लिखें।",
   },
   checking: { en: "Checking…", hi: "देख रहा हूँ…", roman: "Dekh raha hoon…" },
+  answerFail: {
+    en: "The answer could not be sent just now. Send the same message again in a minute.",
+    hi: "जवाब अभी नहीं जा सका। एक मिनट बाद वही संदेश फिर भेजें।",
+  },
 };
 
 function checkingLine(text: string): string {
   if (/[\u0900-\u097F]/.test(text)) return COPY.checking.hi;
   if (/\b(mujhe|batao|kya|kaun|kitna|kitni|chunav|neta|saal|jeeta|jeeti)\b/i.test(text)) return COPY.checking.roman;
   return COPY.checking.en;
+}
+
+function answerFailLine(text: string): string {
+  return /[\u0900-\u097F]/.test(text) ? COPY.answerFail.hi : COPY.answerFail.en;
+}
+
+/** An ack with no later terminal message. Job id and state only — no message text. */
+export async function noteDanglingAck(deps: Pick<RouteDeps, "email" | "store" | "now">, wamid: string, state: string, lineKind: string): Promise<void> {
+  const detail = JSON.stringify({ event: "dangling_ack", wamid, state });
+  console.error(detail);
+  try {
+    await deps.store.logEvent({ verdict: "dangling_ack", line: lineKind, detail: state, test: false }, deps.now());
+  } catch { /* the console line is the record if the store rejects it */ }
+  try {
+    await deps.email({
+      subject: "[Atlas] dangling ack",
+      displayName: "operator",
+      rows: [["Job", wamid || ""], ["State", state]],
+      note: "An acknowledgement was sent and no terminal message followed.",
+    });
+  } catch { /* operator mail is best-effort */ }
 }
 
 type Route = { kind: "ignored_number" } | { kind: "atlas" } | { kind: "business"; source: string };
@@ -423,7 +448,7 @@ export async function handle(ev: WaEvent, rawDeps: RouteDeps, base: RouteConfig 
     t.sentAt = deps.now();
     return done("atlas");
   }
-  /* "Checking…" only when the answer is not back within ackAfterMs. */
+  /* "Checking…" only when the answer is not back within ackAfterMs. Fast answers send nothing first. */
   const text = ev.text;
   let answered = false;
   let ackSending: Promise<unknown> | null = null;
@@ -437,6 +462,8 @@ export async function handle(ev: WaEvent, rawDeps: RouteDeps, base: RouteConfig 
   let reply: AtlasReply;
   try {
     reply = await deps.atlas(line, ev.from, text, hi);
+  } catch {
+    reply = { text: answerFailLine(text), handler: "atlas_error", modelCalls: null, engineMs: null, atlasStatus: "atlas_error" };
   } finally {
     answered = true;
     clearTimeout(timer);
@@ -446,9 +473,26 @@ export async function handle(ev: WaEvent, rawDeps: RouteDeps, base: RouteConfig 
   t.handler = reply.handler;
   t.modelCalls = reply.modelCalls;
   t.engineMs = reply.engineMs;
-  if (ackSending) await ackSending;
-  await deps.sendText(line, ev.from, reply.text, true);
-  t.sentAt = deps.now();
+  if (ackSending) {
+    try { await ackSending; } catch { /* the ack itself never left, so there is nothing to pair */ }
+  }
+  const terminal = reply.text || answerFailLine(text);
+  let notedDangle = false;
+  try {
+    await deps.sendText(line, ev.from, terminal, true);
+    t.sentAt = deps.now();
+  } catch {
+    if (t.ackedAt != null) {
+      try {
+        await deps.sendText(line, ev.from, answerFailLine(text), true);
+        t.sentAt = deps.now();
+      } catch {
+        notedDangle = true;
+        await noteDanglingAck(deps, ev.wamid, "terminal_failed", lineKind);
+      }
+    }
+  }
+  if (!notedDangle && t.ackedAt != null && t.sentAt == null) await noteDanglingAck(deps, ev.wamid, "unpaired", lineKind);
   const shared = cfg.businessId === cfg.atlasId;
   if (shared && !looksDataQuestion(text) && !isAtlasQuestion(text)) {
     await deps.sendButton(line, ev.from, hi ? COPY.offer.hi : COPY.offer.en, TEAM_BUTTON_ID, hi ? COPY.button.hi : COPY.button.en);
@@ -597,7 +641,7 @@ export function sqlStore(query: Query): Store {
       const counts = async (sql: string) =>
         Object.fromEntries((await query(sql, [since])).rows.map((r) => [String(r.k), Number(r.n)]));
       const lastDetail = async (verdict: string) =>
-        ((await query(`select detail from wa_webhook_events where verdict = $1 order by at desc limit 1`, [verdict])).rows[0]?.detail as string) ?? null;
+        ((await query(`select detail from wa_webhook_events where verdict = $1 order by at desc, id desc limit 1`, [verdict])).rows[0]?.detail as string) ?? null;
       return {
         last_webhook_at: await last(`select max(at) as t from wa_webhook_events`),
         last_signature_fail_at: await lastOf("signature_fail"),
