@@ -66,6 +66,7 @@ export async function liveDeps(): Promise<RouteDeps> {
     atlas: E.atlasAnswer,
     sendText: (id, to, body, preview) => E.sendWhatsAppText(to, body, !!preview, id),
     sendButton: (id, to, body, buttonId, title) => E.sendWhatsAppButton(to, body, buttonId, title, id),
+    sendButtons: (id, to, body, buttons) => E.sendWhatsAppButtons(to, body, buttons, id),
     email: (e) => E.emailTeam("whatsapp", e),
   };
 }

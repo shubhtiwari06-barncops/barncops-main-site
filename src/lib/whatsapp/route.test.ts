@@ -212,13 +212,11 @@ for (const kind of ["memory", "sql"] as const) {
       assert.match(COPY.ack.en, /name, constituency\/organisation and requirement in one message/);
     });
 
-    it("slow Atlas answer → Checking… first, then the answer; fast answer → no Checking…", async () => {
+    it("a slow Atlas answer is still one message, with no Checking line", async () => {
       const slow = await rig(kind, { ...SHARED, WA_ACK_AFTER_MS: "20" }, { atlasMs: 120 });
       await slow.post(slow.text("111", "919800000022", "bihar 2020 result"));
-      assert.deepEqual(slow.sent.map((s) => s.body), [COPY.checking.en, "Atlas answer."]);
-      const fast = await rig(kind, { ...SHARED, WA_ACK_AFTER_MS: "500" });
-      await fast.post(fast.text("111", "919800000023", "bihar 2020 result"));
-      assert.deepEqual(fast.sent.map((s) => s.body), ["Atlas answer."]);
+      assert.deepEqual(slow.sent.map((s) => s.body), ["Atlas answer."]);
+      assert.ok(!slow.sent.some((s) => /checking|देख रहा/i.test(s.body)));
     });
 
     it("200 is returned before the work; the work runs in waitUntil", async () => {

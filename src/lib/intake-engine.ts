@@ -376,46 +376,18 @@ export function chooseAtlasReply(body: string, atlasText: string | null, hi: boo
   return { text: atlasMiss(hi), handler: "atlas_miss" };
 }
 
-function checkingLine(hi: boolean, body: string): string {
-  if (hi || /[\u0900-\u097F]/.test(body)) return "देख रहा हूँ…";
-  if (/\b(mujhe|batao|kya|kaun|kitna|chunav|neta|seat|saal)\b/i.test(body)) return "Dekh raha hoon…";
-  return "Checking…";
-}
-
-function ackAfterMs(): number {
-  const n = Number(process.env.WA_ACK_AFTER_MS || 1200);
-  return n >= 0 ? n : 1200;
-}
-
-/** If Atlas is not back within WA_ACK_AFTER_MS, send a short Checking… ping first, then the answer. */
+/** The answer is the message. Checking is not sent on its own. */
 async function replyAtlas(
   phone: string,
   body: string,
   hi: boolean,
-  channel: Channel = "whatsapp",
-  phoneNumberId?: string | null,
+  _channel: Channel = "whatsapp",
+  _phoneNumberId?: string | null,
 ): Promise<{ text: string; handler: string }> {
-  let checkingSent = false;
-  const timer = setTimeout(() => {
-    checkingSent = true;
-    void sendViaChannel(channel, phone, checkingLine(hi, body), false, phoneNumberId).catch(() => {});
-  }, ackAfterMs());
-  try {
-    const asked = await atlasAskReply(phone, body);
-    if (asked && asked.text) {
-      return {
-        text: asked.text,
-        handler: checkingSent ? `${asked.handler}+checking` : asked.handler,
-      };
-    }
-    const miss = chooseAtlasReply(body, null, hi);
-    return {
-      text: miss.text,
-      handler: checkingSent ? `${miss.handler}+checking` : miss.handler,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  const asked = await atlasAskReply(phone, body);
+  if (asked && asked.text) return { text: asked.text, handler: asked.handler };
+  const miss = chooseAtlasReply(body, null, hi);
+  return { text: miss.text, handler: miss.handler };
 }
 
 /** One Ask Atlas answer for a WhatsApp message (no ack, no rows, no email — the router owns those). */
@@ -424,9 +396,10 @@ export async function atlasAnswer(
   phone: string,
   body: string,
   hi: boolean,
-): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null; atlasStatus: string }> {
+  meta?: { buttonId?: string | null },
+): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null; atlasStatus: string; buttons?: { id: string; title: string }[] }> {
   const trail: string[] = [];
-  const asked = await atlasAskReply(phone, body, trail);
+  const asked = await atlasAskReply(phone, body, trail, meta && meta.buttonId);
   const atlasStatus = trail.join(">") || "none";
   if (asked && asked.text) return { ...asked, atlasStatus };
   const miss = chooseAtlasReply(body, null, hi);
@@ -462,7 +435,8 @@ async function atlasAskReply(
   phone: string,
   text: string,
   trail: string[] = [],
-): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null } | null> {
+  buttonId?: string | null,
+): Promise<{ text: string; handler: string; modelCalls: number | null; engineMs: number | null; buttons?: { id: string; title: string }[] } | null> {
   const secret = (process.env.ATLAS_WA_SECRET || "").trim();
   if (!secret) {
     trail.push("no_secret");
@@ -477,7 +451,7 @@ async function atlasAskReply(
     headers["x-vercel-protection-bypass"] = bypass;
     headers["x-vercel-set-bypass-cookie"] = "true";
   }
-  const body = JSON.stringify({ phone, q: text });
+  const body = JSON.stringify({ phone, q: text, button_id: buttonId || "" });
   for (const url of atlasAskUrls()) {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 28000);
@@ -495,7 +469,7 @@ async function atlasAskReply(
         trail.push(`html${r.status}`);
         continue;
       }
-      let j: { text?: string; handler?: string; model_calls?: number; engine_ms?: number } = {};
+      let j: { text?: string; handler?: string; model_calls?: number; engine_ms?: number; buttons?: { id?: string; title?: string }[] } = {};
       try {
         j = JSON.parse(raw) as typeof j;
       } catch {
@@ -509,7 +483,10 @@ async function atlasAskReply(
         const quota = /free answers are used|muft jawaab|मुफ्त जवाब/i.test(textOut);
         const handler = String(j.handler || (quota ? "quota" : "engine"));
         const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-        return { text: textOut, handler, modelCalls: num(j.model_calls), engineMs: num(j.engine_ms) };
+        const buttons = Array.isArray(j.buttons)
+          ? j.buttons.filter((b) => b && b.id && b.title).slice(0, 3).map((b) => ({ id: String(b.id), title: String(b.title).slice(0, 20) }))
+          : undefined;
+        return { text: textOut, handler, modelCalls: num(j.model_calls), engineMs: num(j.engine_ms), buttons };
       }
       console.log("[intake] atlas ask no text", r.status);
       /* A wrong intake secret fails the same way on every Atlas URL; trying the others only adds delay. */
@@ -788,6 +765,21 @@ export async function sendWhatsAppText(to: string, body: string, previewUrl = fa
 /** An approved template with no variables — the only message Meta allows outside the 24 h window. */
 export async function sendWhatsAppTemplate(to: string, name: string, lang: string, phoneNumberId?: string | null): Promise<SendResult> {
   return graphWhatsApp(phoneNumberId, { to, type: "template", template: { name, language: { code: lang } } });
+}
+
+/** Up to three reply buttons on the same message as the answer. Titles ≤ 20 characters. */
+export async function sendWhatsAppButtons(
+  to: string,
+  body: string,
+  buttons: { id: string; title: string }[],
+  phoneNumberId?: string | null,
+): Promise<SendResult> {
+  const action = buttons.slice(0, 3).map((b) => ({ type: "reply", reply: { id: b.id, title: b.title.slice(0, 20) } }));
+  return graphWhatsApp(phoneNumberId, {
+    to,
+    type: "interactive",
+    interactive: { type: "button", body: { text: body }, action: { buttons: action } },
+  });
 }
 
 /** One reply button (title ≤ 20 characters). */

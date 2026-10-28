@@ -6,7 +6,7 @@
  *   WA_BUSINESS_PHONE_ID    phone_number_id for the team. Equal to the Atlas id = shared mode.
  *   WA_BUSINESS_TAG         text the wa.me prefill links carry ("<tag>-<source>" names the source)
  *   WA_INQUIRY_WINDOW_HOURS inactivity window of one inquiry (default 24)
- *   WA_ACK_AFTER_MS         "Checking…" goes out only if the Atlas answer is not back by then (default 1200)
+ *   WA_ACK_AFTER_MS         unused. The answer and its buttons are the only WhatsApp message.
  *   INBOX_BASE_URL          base of the /admin/wa-inbox link in inquiry emails
  *   WA_TEST_NUMBERS         comma list of numbers that are never silenced (owner/test phones)
  *
@@ -173,7 +173,8 @@ export type Store = {
 
 export type Email = { subject: string; displayName: string; rows: Array<[string, string]>; note?: string };
 /** atlasStatus: what the Atlas call returned ("200", "401", "html", "timeout", "no_secret", …). */
-export type AtlasReply = { text: string; handler: string; modelCalls: number | null; engineMs: number | null; atlasStatus?: string };
+export type AtlasButton = { id: string; title: string };
+export type AtlasReply = { text: string; handler: string; modelCalls: number | null; engineMs: number | null; atlasStatus?: string; buttons?: AtlasButton[] };
 /** What a send returned; anything else (void) counts as sent. */
 type Sent = { ok?: boolean; error?: string; status?: number; code?: number | null } | void | unknown;
 
@@ -187,9 +188,10 @@ export function sendFailure(r: Sent): string | null {
 export type RouteDeps = {
   store: Store;
   now: () => number;
-  atlas: (phoneNumberId: string, to: string, text: string, hi: boolean) => Promise<AtlasReply>;
+  atlas: (phoneNumberId: string, to: string, text: string, hi: boolean, meta?: { buttonId?: string | null }) => Promise<AtlasReply>;
   sendText: (phoneNumberId: string, to: string, body: string, previewUrl?: boolean) => Promise<unknown>;
   sendButton: (phoneNumberId: string, to: string, body: string, buttonId: string, title: string) => Promise<unknown>;
+  sendButtons?: (phoneNumberId: string, to: string, body: string, buttons: AtlasButton[]) => Promise<unknown>;
   email: (e: Email) => Promise<void>;
 };
 
@@ -235,14 +237,7 @@ export const COPY = {
     en: "Ask Atlas reads text questions — type a seat, a state and a year, or a leader's name.",
     hi: "Ask Atlas लिखे हुए सवाल पढ़ता है — सीट, राज्य और साल, या नेता का नाम लिखें।",
   },
-  checking: { en: "Checking…", hi: "देख रहा हूँ…", roman: "Dekh raha hoon…" },
 };
-
-function checkingLine(text: string): string {
-  if (/[\u0900-\u097F]/.test(text)) return COPY.checking.hi;
-  if (/\b(mujhe|batao|kya|kaun|kitna|kitni|chunav|neta|saal|jeeta|jeeti)\b/i.test(text)) return COPY.checking.roman;
-  return COPY.checking.en;
-}
 
 type Route = { kind: "ignored_number" } | { kind: "atlas" } | { kind: "business"; source: string };
 
@@ -333,6 +328,9 @@ export async function handle(ev: WaEvent, rawDeps: RouteDeps, base: RouteConfig 
     ...rawDeps,
     sendText: (l, to, body, preview) => rawDeps.sendText(l, to, body, preview).then(checked),
     sendButton: (l, to, body, id, title) => rawDeps.sendButton(l, to, body, id, title).then(checked),
+    sendButtons: rawDeps.sendButtons
+      ? (l, to, body, buttons) => rawDeps.sendButtons!(l, to, body, buttons).then(checked)
+      : undefined,
   };
   const route = decide(ev, cfg);
   const t: Timing = {
@@ -418,41 +416,37 @@ export async function handle(ev: WaEvent, rawDeps: RouteDeps, base: RouteConfig 
 
   counters.atlas += 1;
   await mark("atlas");
-  if (ev.type !== "text" || !ev.text) {
+  const text = (ev.text || "").trim();
+  const buttonId = ev.buttonId;
+  const tappable = ev.type === "text" || ev.type === "interactive" || ev.type === "button";
+  if (!tappable || (!text && !buttonId)) {
     await deps.sendText(line, ev.from, hi ? COPY.textOnly.hi : COPY.textOnly.en);
     t.sentAt = deps.now();
     return done("atlas");
   }
-  /* "Checking…" only when the answer is not back within ackAfterMs. */
-  const text = ev.text;
-  let answered = false;
-  let ackSending: Promise<unknown> | null = null;
-  const timer = setTimeout(() => {
-    if (answered) return;
-    ackSending = deps.sendText(line, ev.from, checkingLine(text)).then(() => {
-      t.ackedAt = deps.now();
-    });
-  }, cfg.ackAfterMs);
+  /* One WhatsApp message: the answer, with its buttons when it has them. No separate Checking line. */
   t.engineStart = deps.now();
   let reply: AtlasReply;
   try {
-    reply = await deps.atlas(line, ev.from, text, hi);
-  } finally {
-    answered = true;
-    clearTimeout(timer);
+    reply = await deps.atlas(line, ev.from, text, hi, { buttonId });
+  } catch {
+    reply = { text: hi ? COPY.textOnly.hi : COPY.textOnly.en, handler: "atlas_error", modelCalls: null, engineMs: null };
   }
   t.engineEnd = deps.now();
   if (reply.atlasStatus) await note(deps, "atlas", lineKind, reply.atlasStatus);
   t.handler = reply.handler;
   t.modelCalls = reply.modelCalls;
   t.engineMs = reply.engineMs;
-  if (ackSending) await ackSending;
-  await deps.sendText(line, ev.from, reply.text, true);
-  t.sentAt = deps.now();
+  const terminal = reply.text || (hi ? COPY.textOnly.hi : COPY.textOnly.en);
+  const buttons = (reply.buttons || []).filter((b) => b && b.id && b.title).slice(0, 3).map((b) => ({ id: b.id, title: b.title.slice(0, 20) }));
   const shared = cfg.businessId === cfg.atlasId;
-  if (shared && !looksDataQuestion(text) && !isAtlasQuestion(text)) {
-    await deps.sendButton(line, ev.from, hi ? COPY.offer.hi : COPY.offer.en, TEAM_BUTTON_ID, hi ? COPY.button.hi : COPY.button.en);
+  if (shared && !looksDataQuestion(text) && !isAtlasQuestion(text) && buttons.length < 3 && !buttons.some((b) => b.id === TEAM_BUTTON_ID)) {
+    buttons.push({ id: TEAM_BUTTON_ID, title: (hi ? COPY.button.hi : COPY.button.en).slice(0, 20) });
   }
+  if (buttons.length && deps.sendButtons) await deps.sendButtons(line, ev.from, terminal, buttons);
+  else if (buttons.length === 1) await deps.sendButton(line, ev.from, terminal, buttons[0].id, buttons[0].title);
+  else await deps.sendText(line, ev.from, terminal, true);
+  t.sentAt = deps.now();
   return done("atlas");
 }
 
@@ -597,7 +591,7 @@ export function sqlStore(query: Query): Store {
       const counts = async (sql: string) =>
         Object.fromEntries((await query(sql, [since])).rows.map((r) => [String(r.k), Number(r.n)]));
       const lastDetail = async (verdict: string) =>
-        ((await query(`select detail from wa_webhook_events where verdict = $1 order by at desc limit 1`, [verdict])).rows[0]?.detail as string) ?? null;
+        ((await query(`select detail from wa_webhook_events where verdict = $1 order by at desc, id desc limit 1`, [verdict])).rows[0]?.detail as string) ?? null;
       return {
         last_webhook_at: await last(`select max(at) as t from wa_webhook_events`),
         last_signature_fail_at: await lastOf("signature_fail"),
