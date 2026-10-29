@@ -63,6 +63,10 @@ function asksPrice(text: string): boolean {
   return /\b(price|pricing|cost|how much|kitna|daam)\b/i.test(text) || /कीमत|दाम/.test(text);
 }
 
+function wantsPlan(text: string): boolean {
+  return /\b(plan|plans|subscription|ask sarathi)\b/i.test(text) || /प्लान|सरथी/.test(text);
+}
+
 /** Used only when Atlas cannot be reached. Still one reply, still no result. */
 export function fallbackReply(input: DoorIn): string {
   const text = String(input.text || "").replace(/\s+/g, " ").trim();
@@ -71,6 +75,15 @@ export function fallbackReply(input: DoorIn): string {
     if (lang === "deva") return "कस्टम रिसर्च और एडवाइजरी सिर्फ़ एक लीड है। नाम, संस्था, ज़रूरत, और सुविधा का समय भेजें।";
     if (lang === "roman") return "Custom research aur advisory sirf ek lead hai. Naam, organisation, zarurat, aur pasand ka time bhejein.";
     return "Custom research and advisory are a lead only. Send your name, organisation, the need, and a preferred time.";
+  }
+  if (wantsPlan(text) && !asksPrice(text)) {
+    const link = waLink(input.channel, "Ask Sarathi", "PR", "ask-sarathi");
+    const line = lang === "deva"
+      ? "Ask Sarathi। अगला कदम WhatsApp है।"
+      : lang === "roman"
+        ? "Ask Sarathi. Agla kadam WhatsApp hai."
+        : "Ask Sarathi. The next step is WhatsApp.";
+    return line + "\n" + link;
   }
   const link = waLink(input.channel, text || "Atlas", asksPrice(text) ? "PR" : "GEN", asksPrice(text) ? "ask-sarathi" : "ask");
   if (asksPrice(text)) {
