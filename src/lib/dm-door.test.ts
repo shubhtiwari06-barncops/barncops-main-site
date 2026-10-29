@@ -30,7 +30,7 @@ test("a seat question is one WhatsApp handoff and not a result", async () => {
   const text = await replyToSocialDm(input, {
     env: { ATLAS_WA_SECRET: "x".repeat(32), ATLAS_WA_ASK_URL: "https://atlas.example/api/wa-ask/" },
     fetchImpl: async () => new Response(JSON.stringify({
-      text: "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?\nhttps://wa.me/919522236699?text=who%20won%20Barmer%20(ref%20I.LS.Barmer)",
+      text: "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?\nhttps://wa.me/919522236699?text=Ask%20Sarathi%20(ref%20I.LS.Barmer)",
     }), { status: 200 }),
     send: async (_c, _id, body) => { sent.push(body); },
   });
@@ -53,10 +53,17 @@ test("a result-shaped Atlas reply is not sent", async () => {
 
 test("my plan is a WhatsApp handoff and not the words my plan", () => {
   const text = fallbackReply({ channel: "instagram", userId: "8", text: "my plan" });
-  assert.equal(prose(text), "Ask Sarathi. The next step is WhatsApp.\n");
+  assert.equal(prose(text), "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?\n");
   assert.equal(/₹/.test(text), false);
-  assert.match(decodeURIComponent(text), /Ask Sarathi \(ref I\.PR\.ask-sarathi\)/);
+  assert.equal(decodeURIComponent(text.split("text=")[1] || ""), "Ask Sarathi (ref I.PR.ask-sarathi)");
   assert.equal(/\bmy plan\b/i.test(decodeURIComponent(text)), false);
+});
+
+test("shamli 2022 is not copied into the WhatsApp draft", () => {
+  const text = fallbackReply({ channel: "facebook", userId: "7", text: "शामली 2022" });
+  assert.match(prose(text), /जवाब WhatsApp पर दिया जाता है/);
+  assert.equal(decodeURIComponent(text.split("text=")[1] || ""), "Ask Sarathi (ref F.GEN.ask)");
+  assert.equal(/शामली/.test(decodeURIComponent(text.split("text=")[1] || "")), false);
 });
 
 test("price is one figure when Atlas is down", () => {

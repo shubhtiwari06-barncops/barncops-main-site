@@ -42,8 +42,8 @@ export function refCode(channel: DoorChannel, kind: string, object: string): str
   return `(ref ${letter(channel)}.${kind}.${slug(object)})`;
 }
 
-export function waLink(channel: DoorChannel, text: string, kind: string, object: string): string {
-  const body = `${String(text || "Atlas").trim()} ${refCode(channel, kind, object)}`.trim();
+export function waLink(channel: DoorChannel, kind: string, object: string): string {
+  const body = `Ask Sarathi ${refCode(channel, kind, object)}`;
   return `https://wa.me/${WA}?text=${encodeURIComponent(body)}`;
 }
 
@@ -77,15 +77,15 @@ export function fallbackReply(input: DoorIn): string {
     return "Custom research and advisory are a lead only. Send your name, organisation, the need, and a preferred time.";
   }
   if (wantsPlan(text) && !asksPrice(text)) {
-    const link = waLink(input.channel, "Ask Sarathi", "PR", "ask-sarathi");
+    const link = waLink(input.channel, "PR", "ask-sarathi");
     const line = lang === "deva"
-      ? "Ask Sarathi। अगला कदम WhatsApp है।"
+      ? "जवाब WhatsApp पर दिया जाता है।\nक्या चाहिए: एक सीट, एक क्षेत्र, एक नेता, या एक प्लान?"
       : lang === "roman"
-        ? "Ask Sarathi. Agla kadam WhatsApp hai."
-        : "Ask Sarathi. The next step is WhatsApp.";
+        ? "Jawab WhatsApp par milta hai.\nKya chahiye: ek seat, ek ilaka, ek neta, ya ek plan?"
+        : "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?";
     return line + "\n" + link;
   }
-  const link = waLink(input.channel, text || "Atlas", asksPrice(text) ? "PR" : "GEN", asksPrice(text) ? "ask-sarathi" : "ask");
+  const link = waLink(input.channel, asksPrice(text) ? "PR" : "GEN", asksPrice(text) ? "ask-sarathi" : "ask");
   if (asksPrice(text)) {
     const line = lang === "deva" ? "Ask Sarathi ₹1,499 से।" : lang === "roman" ? "Ask Sarathi ₹1,499 se." : "Ask Sarathi from ₹1,499.";
     return line + "\n" + link;
