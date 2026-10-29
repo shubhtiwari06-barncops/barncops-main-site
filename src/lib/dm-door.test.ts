@@ -47,13 +47,13 @@ test("a result-shaped Atlas reply is not sent", async () => {
     return new Response(JSON.stringify({ text: "Barmer was won by 12,345 votes.\nhttps://rzp.io/rzp/example" }), { status: 200 });
   });
   assert.equal(RESULT.test(prose(text)), false);
-  assert.match(text, /The answer is delivered on WhatsApp/);
+  assert.match(text, /Barnstorm Election Atlas\. I am Sarathi\./);
   assert.match(decodeURIComponent(text), /\(ref F\.GEN\.ask\)/);
 });
 
 test("my plan is a WhatsApp handoff and not the words my plan", () => {
   const text = fallbackReply({ channel: "instagram", userId: "8", text: "my plan" });
-  assert.equal(prose(text), "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?\n");
+  assert.equal(prose(text), "Barnstorm Election Atlas. I am Sarathi. I answer from election results, not guesses.\n");
   assert.equal(/₹/.test(text), false);
   assert.equal(decodeURIComponent(text.split("text=")[1] || ""), "Ask Sarathi (ref I.PR.ask-sarathi)");
   assert.equal(/\bmy plan\b/i.test(decodeURIComponent(text)), false);
@@ -61,7 +61,7 @@ test("my plan is a WhatsApp handoff and not the words my plan", () => {
 
 test("shamli 2022 is not copied into the WhatsApp draft", () => {
   const text = fallbackReply({ channel: "facebook", userId: "7", text: "शामली 2022" });
-  assert.match(prose(text), /जवाब WhatsApp पर दिया जाता है/);
+  assert.match(prose(text), /मैं सारथी हूँ/);
   assert.equal(decodeURIComponent(text.split("text=")[1] || ""), "Ask Sarathi (ref F.GEN.ask)");
   assert.equal(/शामली/.test(decodeURIComponent(text.split("text=")[1] || "")), false);
 });
@@ -85,7 +85,7 @@ test("advisory collects a lead and has no price", () => {
 
 test("Hindi is answered in Hindi and a phone is not requested", () => {
   const text = fallbackReply({ channel: "instagram", userId: "3", text: "बड़मेर में कौन जीता" });
-  assert.match(prose(text), /जवाब WhatsApp पर दिया जाता है/);
+  assert.match(prose(text), /मैं सारथी हूँ/);
   assert.equal(/नंबर|phone|मोबाइल/.test(prose(text)), false);
   assert.match(text, /wa\.me\/919522236699/);
 });
