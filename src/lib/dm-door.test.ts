@@ -51,6 +51,14 @@ test("a result-shaped Atlas reply is not sent", async () => {
   assert.match(decodeURIComponent(text), /\(ref F\.GEN\.ask\)/);
 });
 
+test("my plan is a WhatsApp handoff and not the words my plan", () => {
+  const text = fallbackReply({ channel: "instagram", userId: "8", text: "my plan" });
+  assert.equal(prose(text), "Ask Sarathi. The next step is WhatsApp.\n");
+  assert.equal(/₹/.test(text), false);
+  assert.match(decodeURIComponent(text), /Ask Sarathi \(ref I\.PR\.ask-sarathi\)/);
+  assert.equal(/\bmy plan\b/i.test(decodeURIComponent(text)), false);
+});
+
 test("price is one figure when Atlas is down", () => {
   const text = fallbackReply({ channel: "instagram", userId: "1", text: "what is the price" });
   assert.equal(prose(text), "Ask Sarathi from ₹1,499.\n");
