@@ -76,26 +76,20 @@ export function fallbackReply(input: DoorIn): string {
     if (lang === "roman") return "Custom research aur advisory sirf ek lead hai. Naam, organisation, zarurat, aur pasand ka time bhejein.";
     return "Custom research and advisory are a lead only. Send your name, organisation, the need, and a preferred time.";
   }
+  const welcome = lang === "deva"
+    ? "Barnstorm Election Atlas। मैं सारथी हूँ। जवाब चुनाव के नतीजों से है, अनुमान से नहीं।"
+    : lang === "roman"
+      ? "Barnstorm Election Atlas. Main Sarathi hoon. Jawab chunav ke natije se hai, andaze se nahi."
+      : "Barnstorm Election Atlas. I am Sarathi. I answer from election results, not guesses.";
   if (wantsPlan(text) && !asksPrice(text)) {
-    const link = waLink(input.channel, "PR", "ask-sarathi");
-    const line = lang === "deva"
-      ? "जवाब WhatsApp पर दिया जाता है।\nक्या चाहिए: एक सीट, एक क्षेत्र, एक नेता, या एक प्लान?"
-      : lang === "roman"
-        ? "Jawab WhatsApp par milta hai.\nKya chahiye: ek seat, ek ilaka, ek neta, ya ek plan?"
-        : "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?";
-    return line + "\n" + link;
+    return welcome + "\n" + waLink(input.channel, "PR", "ask-sarathi");
   }
   const link = waLink(input.channel, asksPrice(text) ? "PR" : "GEN", asksPrice(text) ? "ask-sarathi" : "ask");
   if (asksPrice(text)) {
     const line = lang === "deva" ? "Ask Sarathi ₹1,499 से।" : lang === "roman" ? "Ask Sarathi ₹1,499 se." : "Ask Sarathi from ₹1,499.";
     return line + "\n" + link;
   }
-  const door = lang === "deva"
-    ? "जवाब WhatsApp पर दिया जाता है।\nक्या चाहिए: एक सीट, एक क्षेत्र, एक नेता, या एक प्लान?"
-    : lang === "roman"
-      ? "Jawab WhatsApp par milta hai.\nKya chahiye: ek seat, ek ilaka, ek neta, ya ek plan?"
-      : "The answer is delivered on WhatsApp.\nWhat do you want: a seat, a region, a leader, or a plan?";
-  return door + "\n" + link;
+  return welcome + "\n" + link;
 }
 
 function prose(text: string): string {
