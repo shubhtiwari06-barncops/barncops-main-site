@@ -1,18 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createHmac } from "node:crypto";
-import { handleInbound } from "../lib/intake-engine";
+import { replyToSocialDm } from "../lib/dm-door";
 
 /**
- * Meta social webhook — Messenger + Instagram DMs — Barnstorm Co-operations
- * v7 unified intake. One Meta app, one Page token, both channels.
+ * Meta social webhook — Messenger + Instagram DMs.
+ * One reply from the Atlas lead door. Not Ask, and not the WhatsApp funnel.
  *
  * - GET  /api/social/webhook : Meta verification handshake (SOCIAL_WEBHOOK_VERIFY_TOKEN)
  * - POST /api/social/webhook : inbound messages (object "page" = Messenger,
  *   object "instagram" or messaging_product "instagram" = Instagram DMs)
  *
  * Env: SOCIAL_WEBHOOK_VERIFY_TOKEN, META_APP_SECRET (optional but recommended),
- *      MESSENGER_PAGE_ID, MESSENGER_PAGE_TOKEN (shared with engine).
- * Requires migrations 001 + 002 + 003.
+ *      MESSENGER_PAGE_ID, MESSENGER_PAGE_TOKEN,
+ *      ATLAS_WA_SECRET, ATLAS_WA_ASK_URL (door is /api/dm-door/ on that host).
  */
 
 type MetaMsg = {
@@ -67,38 +67,29 @@ export const Route = createFileRoute("/api/social/webhook")({
 
         try {
           const obj = payload.object;
-          const handleOne = async (m: MetaMsg, channel: "messenger" | "instagram", contactName: string | null) => {
+          const handleOne = async (m: MetaMsg, channel: "messenger" | "instagram") => {
             const isEcho = !!(m.message?.is_echo || m.is_echo);
             if (isEcho) return;
             const senderId = m.sender?.id || m.from?.id || null;
             if (!senderId) return;
             const text = m.message?.text ?? m.text ?? null;
-            const att = m.message?.attachments?.[0];
-            const kind: "text" | "media" = text ? "text" : "media";
-            const mediaType = att?.mime_type || att?.type || null;
-            await handleInbound({
-              channel,
-              senderKey: senderId,
-              text,
-              kind,
-              mediaType,
-              profileName: m.from?.username || contactName,
-              timestamp: null,
-              messageId: m.message?.mid || m.id || null,
+            await replyToSocialDm({
+              channel: channel === "instagram" ? "instagram" : "facebook",
+              userId: senderId,
+              text: text || "",
             });
           };
           for (const entry of payload.entry || []) {
             // Messenger shape: entry.messaging[] with sender/recipient/message
             for (const m of entry.messaging || []) {
               const chan = obj === "instagram" ? ("instagram" as const) : ("messenger" as const);
-              await handleOne(m, chan, null);
+              await handleOne(m, chan);
             }
             // Instagram / change-list shape: entry.changes[].value.messages[]
             for (const change of entry.changes || []) {
               const value = change.value || {};
-              const contactName = value.contacts?.[0]?.profile?.name || null;
               const chan = obj === "instagram" || value.messaging_product === "instagram" ? ("instagram" as const) : ("messenger" as const);
-              for (const m of value.messages || []) await handleOne(m, chan, contactName);
+              for (const m of value.messages || []) await handleOne(m, chan);
             }
           }
         } catch (err) {
